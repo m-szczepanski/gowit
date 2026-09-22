@@ -1,6 +1,6 @@
 # gowit
 
-> A fast, lightweight, cross-platform Git client with a native GUI — built with Go and React.
+> A fast, lightweight, cross-platform Git client with a native GUI - built with Go and React.
 
 An alternative to GitKraken and SourceTree, without the Electron memory overhead, and with code you can fully understand and modify.
 
@@ -12,11 +12,11 @@ An alternative to GitKraken and SourceTree, without the Electron memory overhead
 
 Existing Git clients are either heavy (Electron), closed/paid (GitKraken), or unmaintained on some platforms (SourceTree has no Linux version). `gowit` aims to be:
 
-- **Lightweight** — a native binary a few to a dozen MB in size, low RAM usage (Wails, not Electron)
-- **Fast** — repo operations run in the background, the UI never blocks
-- **Clear** — the branch and commit graph is readable at a glance
-- **Cross-platform** — Windows, macOS, Linux from a single codebase
-- **Open source** — full control, no telemetry, no vendor lock-in
+- **Lightweight** - a native binary a few to a dozen MB in size, low RAM usage (Wails, not Electron)
+- **Fast** - repo operations run in the background, the UI never blocks
+- **Clear** - the branch and commit graph is readable at a glance
+- **Cross-platform** - Windows, macOS, Linux from a single codebase
+- **Open source** - full control, no telemetry, no vendor lock-in
 
 ## Features (planned / done)
 
