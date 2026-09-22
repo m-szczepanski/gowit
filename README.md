@@ -39,7 +39,7 @@ Detailed architecture and technical decisions: [`ARCHITECTURE.md`](./ARCHITECTUR
 ## Tech stack
 
 | Layer | Technology |
-|---|---|
+| --- | --- |
 | Desktop framework | [Wails v2](https://wails.io/) |
 | Backend | Go |
 | Git operations | `git` CLI (shell-out) + a helper parsing library |
@@ -61,7 +61,7 @@ Detailed architecture and technical decisions: [`ARCHITECTURE.md`](./ARCHITECTUR
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
 # clone and install dependencies
-git clone https://github.com/<your-username>/gowit.git
+git clone https://github.com/m-szczepanski/gowit.git
 cd gowit
 go mod tidy
 cd frontend && npm install && cd ..
@@ -80,7 +80,7 @@ Binaries land in `build/bin/` for the platform you're building on. Cross-compili
 
 ## Project structure
 
-```
+```md
 gowit/
 ├── app.go              # bridge between Go and the frontend (exported methods)
 ├── main.go             # Wails application initialization
