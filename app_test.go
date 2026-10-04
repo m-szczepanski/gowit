@@ -9,8 +9,6 @@ import (
 	"gowit/internal/watcher"
 )
 
-// Compile-and-instantiate proof for issue #7's acceptance criterion:
-// all internal packages are importable and usable from the app layer.
 func TestInternalPackagesImportable(t *testing.T) {
 	_ = watcher.Watcher{}
 	_ = config.Settings{Theme: "dark"}

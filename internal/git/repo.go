@@ -35,8 +35,8 @@ func (r *Repo) Path() string {
 	return r.path
 }
 
-// Close releases any resources held by the Repo. It is currently a
-// placeholder for future cleanup (watchers, in-flight commands).
+// Close is a placeholder: no resources are held yet. Watchers and
+// in-flight git commands will register their cleanup here.
 func (r *Repo) Close() error {
 	return nil
 }

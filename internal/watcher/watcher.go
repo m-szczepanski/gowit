@@ -5,6 +5,6 @@
 // files that signal repo state: .git/HEAD, .git/refs/, .git/index.
 package watcher
 
-// Watcher is a placeholder for the fsnotify-backed watcher implemented
-// in the status/watcher tasks.
+// Watcher is an empty placeholder until the watcher task implements it;
+// see the strategy in the package comment.
 type Watcher struct{}

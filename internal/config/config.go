@@ -6,14 +6,11 @@
 // persistence is implemented here on purpose.
 package config
 
-// Settings is a placeholder for user preferences (theme, keybindings,
-// layout). Fields land with the settings screen task.
+// Settings holds user preferences; more fields land with the settings screen.
 type Settings struct {
 	Theme string
 }
 
-// Profile is one opened repository: the path plus per-repo UI state
-// remembered between sessions.
 type Profile struct {
 	RepoPath string
 }
