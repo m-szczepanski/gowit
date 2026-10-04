@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"time"
 )
 
 // buildGitCmd is the single place git binaries are constructed: machine
@@ -15,6 +16,10 @@ import (
 func buildGitCmd(ctx context.Context, repoPath string, args ...string) *exec.Cmd {
 	machineArgs := append([]string{"--no-pager", "-c", "color.ui=never"}, args...)
 	cmd := exec.CommandContext(ctx, "git", machineArgs...)
+	// ctx done kills git; WaitDelay then caps how long we keep waiting for
+	// output pipes that killed git's children (hooks, credential helpers)
+	// may still hold open.
+	cmd.WaitDelay = 2 * time.Second
 	cmd.Dir = repoPath
 	cmd.Env = append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",

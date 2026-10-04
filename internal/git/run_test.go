@@ -3,10 +3,12 @@ package git
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunGitReturnsStdoutStderr(t *testing.T) {
@@ -66,6 +68,38 @@ func TestRunGitSpawnFailureMapsCommandFailed(t *testing.T) {
 	}
 	if gitErr.ExitCode != -1 {
 		t.Fatalf("ExitCode = %d, want -1 for spawn failure", gitErr.ExitCode)
+	}
+}
+
+func TestRunGitKillsOnContextTimeout(t *testing.T) {
+	dir := initRepo(t)
+	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
+	// a blocking hook keeps git alive past the deadline on every OS:
+	// Git for Windows runs hooks through its bundled sh, where sleep exists
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, _, err := runGit(ctx, dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "slow")
+	elapsed := time.Since(started)
+
+	var gitErr *GitError
+	if !errors.As(err, &gitErr) {
+		t.Fatalf("err = %v, want *GitError", err)
+	}
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+	// Kill alone is not enough: the hook's `sleep` grandchild holds the output
+	// pipes open, so runGit must also stop waiting on the streams (WaitDelay).
+	if elapsed > 10*time.Second {
+		t.Fatalf("runGit took %v after timeout, want < 10s", elapsed)
+	}
+	if !strings.Contains(gitErr.Message, "killed") {
+		t.Fatalf("Message = %q, want mention of kill", gitErr.Message)
 	}
 }
 
