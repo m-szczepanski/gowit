@@ -46,7 +46,8 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
 
       - name: build
-        run: wails build
+        # webkit2_41: match the 4.1/soup3 dev packages installed for linux
+        run: wails build -tags webkit2_41
 
       - name: bundle macOS app
         if: matrix.os == 'macos-latest'

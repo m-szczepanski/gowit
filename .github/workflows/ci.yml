@@ -104,7 +104,9 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
 
       - name: build
-        run: wails build
+        # webkit2_41: Wails defaults to webkit2gtk-4.0 for cgo; the installed
+        # dev packages are the 4.1/soup3 stack, matching ubuntu-24.04's default
+        run: wails build -tags webkit2_41
 
       - name: upload diagnostics on failure
         if: failure()
