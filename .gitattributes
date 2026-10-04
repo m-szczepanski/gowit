@@ -1,0 +1,36 @@
+# Source files are stored and checked out with LF everywhere; without
+# this, windows-latest runners get CRLF working trees and gofmt flags
+# every Go file.
+* text=auto
+
+*.go text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.jsx text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+
+*.sh text eol=lf
+*.bash text eol=lf
+
+*.nsi text eol=lf
+*.nsh text eol=lf
+*.manifest text eol=lf
+*.plist text eol=lf
+*.md text eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary
+*.woff2 binary

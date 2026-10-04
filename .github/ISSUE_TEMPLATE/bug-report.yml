@@ -1,0 +1,48 @@
+name: Bug report
+description: A git operation, panel, or build does not behave as documented
+labels: ["bug"]
+body:
+  - type: textarea
+    attributes:
+      label: What happened
+      description: Steps you took, what you saw. A deterministic command line equivalent of the broken step helps enormously.
+      placeholder: |
+        1. Opened repo /path/to/repo
+        2. Staged two files, clicked Commit
+        3. Sidebar still shows the old status
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - area:backend
+        - area:frontend
+        - area:git
+        - area:build
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS and version
+      placeholder: macOS 15.2 / Windows 11 24H2 / Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: git-version
+    attributes:
+      label: git version (output of `git --version`)
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: gowit version / build
+      description: Release tag or the commit you built from (`git rev-parse --short HEAD` in this repo).

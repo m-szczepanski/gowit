@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Architecture decisions
+    url: https://github.com/m-szczepanski/gowit/blob/main/docs/ARCHITECTURE.md
+    about: Read the reasoning behind stack choices before proposing a change of direction.

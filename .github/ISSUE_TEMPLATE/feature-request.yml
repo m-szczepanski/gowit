@@ -1,0 +1,29 @@
+name: Feature request
+description: A capability the git client should gain
+labels: ["enhancement"]
+body:
+  - type: textarea
+    attributes:
+      label: The workflow you want to do
+      description: Describe the daily-driver task, not the implementation. What would you do in the terminal today?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Why it matters
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - area:backend
+        - area:frontend
+        - area:git
+        - area:build
+  - type: textarea
+    attributes:
+      label: Prior art
+      description: How GitKraken, SourceTree, lazygit or the CLI handle this, if at all.
