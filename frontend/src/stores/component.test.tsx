@@ -1,5 +1,5 @@
 import {act, render, screen} from '@testing-library/react';
-import {describe, expect, it} from 'vitest';
+import {beforeEach, describe, expect, it} from 'vitest';
 import {useRepoStore} from './repo';
 import {useUiStore} from './ui';
 
@@ -10,8 +10,13 @@ function RepoBadge() {
 }
 
 describe('stores in components', () => {
-    it('renders reactively from both stores', () => {
+    beforeEach(() => {
         useRepoStore.getState().closeRepo();
+        useUiStore.getState().setActivePanel('status');
+        useUiStore.getState().selectCommit(null);
+    });
+
+    it('renders reactively from both stores', () => {
         render(<RepoBadge/>);
         expect(screen.getByTestId('badge').textContent).toBe('no repo');
 
@@ -20,7 +25,5 @@ describe('stores in components', () => {
             useUiStore.getState().setActivePanel('history');
         });
         expect(screen.getByTestId('badge').textContent).toBe('open:history');
-
-        act(() => useRepoStore.getState().closeRepo());
     });
 });

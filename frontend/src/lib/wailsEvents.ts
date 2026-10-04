@@ -1,18 +1,17 @@
 import type {QueryClient, QueryKey} from '@tanstack/react-query';
 
 /**
- * Minimal view of a Wails-style event bus (runtime.EventsOn/EventsOff).
- * Kept as an injected dependency so this module is testable without the
- * Wails runtime and can be fed the real bus when the watcher lands:
+ * Minimal view of a Wails-style event bus. Matches runtime.EventsOn exactly:
+ * subscribing returns an unsubscribe closure (runtime.EventsOff drops ALL
+ * listeners for an event name, so it is useless for scoped detach).
+ * Wiring the real bus is therefore just:
  *
- *   bindInvalidatingEvents(client, {
- *     on: runtime.EventsOn,
- *     off: runtime.EventsOff
- *   }, [{event: 'repo:changed', queryKey: queryKeys.status(path)}]);
+ *   bindInvalidatingEvents(client, {on: runtime.EventsOn}, [
+ *     {event: 'repo:changed', queryKey: queryKeys.status(path)}
+ *   ]);
  */
 export type EventSource = {
-    on(event: string, callback: () => void): void;
-    off(event: string, callback: () => void): void;
+    on(event: string, callback: () => void): () => void;
 };
 
 export type EventInvalidation = {
@@ -30,15 +29,13 @@ export function bindInvalidatingEvents(
     source: EventSource,
     bindings: EventInvalidation[]
 ): () => void {
-    const handlers = bindings.map(({event, queryKey}) => {
-        const handler = () => client.invalidateQueries({queryKey});
-        source.on(event, handler);
-        return {event, handler};
-    });
+    const unsubscribes = bindings.map(({event, queryKey}) =>
+        source.on(event, () => client.invalidateQueries({queryKey}))
+    );
 
     return () => {
-        for (const {event, handler} of handlers) {
-            source.off(event, handler);
+        for (const unsubscribe of unsubscribes) {
+            unsubscribe();
         }
     };
 }

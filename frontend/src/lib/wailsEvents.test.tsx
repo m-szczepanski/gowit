@@ -2,6 +2,7 @@ import type {ReactNode} from 'react';
 import {QueryClientProvider, useQuery} from '@tanstack/react-query';
 import {renderHook, waitFor} from '@testing-library/react';
 import {describe, expect, it, vi} from 'vitest';
+import {EventsOn} from '../../wailsjs/runtime/runtime';
 import {createQueryClient} from './queryClient';
 import {queryKeys} from './queryKeys';
 import {bindInvalidatingEvents, type EventSource} from './wailsEvents';
@@ -14,9 +15,7 @@ function createFakeBus(): FakeBus {
         on(event, callback) {
             if (!listeners.has(event)) listeners.set(event, new Set());
             listeners.get(event)!.add(callback);
-        },
-        off(event, callback) {
-            listeners.get(event)?.delete(callback);
+            return () => listeners.get(event)?.delete(callback);
         },
         emit(event) {
             listeners.get(event)?.forEach((cb) => cb());
@@ -45,5 +44,10 @@ describe('bindInvalidatingEvents', () => {
         cleanup();
         bus.emit('repo:changed');
         expect(queryFn).toHaveBeenCalledTimes(2);
+    });
+
+    it('accepts the real wails runtime EventsOn as the source', () => {
+        const source: EventSource = {on: EventsOn};
+        expect(typeof source.on).toBe('function');
     });
 });

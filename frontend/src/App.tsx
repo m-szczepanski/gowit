@@ -12,7 +12,8 @@ function App() {
 
     const pingBackend = () => {
         queryClient
-            .fetchQuery(exampleBindOptions)
+            // staleTime 0: a deliberate ping always goes live to Go, unlike background reads
+            .fetchQuery({...exampleBindOptions, staleTime: 0})
             .then(setBindResult)
             .catch((err) => setBindResult(String(err)));
     };
