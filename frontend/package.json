@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node -e \"const fs=require('fs');for(const f of fs.readdirSync('dist'))if(f!=='.gitkeep')fs.rmSync('dist/'+f,{recursive:true})\"",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "eslint .",

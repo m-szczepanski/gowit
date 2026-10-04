@@ -17,12 +17,10 @@ go.work.sum
 
 # --- Node / frontend ---
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
 .eslintcache
 *.tsbuildinfo
+*.log
+*.log.*
 
 # Keep the embed placeholder: main.go //go:embed all:frontend/dist needs the
 # directory to exist on a fresh clone, but not the vite build output.
@@ -41,13 +39,15 @@ build/bin/
 
 # --- Test output ---
 coverage/
-frontend/coverage/
 test-results/
 playwright-report/
+blob-report/
 
 # --- Env / local overrides ---
 .env
 .env.*
+!.env.example
+!.env.sample
 *.local
 
 # --- Editors / IDEs ---
@@ -64,6 +64,3 @@ desktop.ini
 
 # --- Local agent skills library (see AGENTS.md) ---
 skills/
-
-# --- Logs ---
-*.log

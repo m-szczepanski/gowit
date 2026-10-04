@@ -10,8 +10,9 @@ export default defineConfig({
     },
     clearScreen: false,
     build: {
-        // .gitkeep in dist/ is committed (go:embed needs it); wiping the whole
-        // directory on build would delete a tracked file
+        // dist/.gitkeep is committed (main.go //go:embed needs the dir on a
+        // fresh clone); the prebuild script removes stale output instead,
+        // since emptyOutDir:true would wipe the tracked placeholder
         emptyOutDir: false
     },
     server: {
