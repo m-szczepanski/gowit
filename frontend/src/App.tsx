@@ -4,14 +4,15 @@ import {Button} from '@/components/ui/button';
 import {Toaster} from '@/components/ui/sonner';
 import {ThemeDemo} from '@/components/ThemeDemo';
 import {createQueryClient} from '@/lib/queryClient';
-import {ExampleBind} from '../wailsjs/go/main/App';
+import {exampleBindOptions} from '@/lib/exampleBind';
 
 function App() {
     const [queryClient] = useState(createQueryClient);
     const [bindResult, setBindResult] = useState('Go binding not called yet');
 
     const pingBackend = () => {
-        ExampleBind()
+        queryClient
+            .fetchQuery(exampleBindOptions)
             .then(setBindResult)
             .catch((err) => setBindResult(String(err)));
     };
