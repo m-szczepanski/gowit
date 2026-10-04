@@ -1,44 +1,47 @@
-import {useState} from 'react';
 import {QueryClientProvider} from '@tanstack/react-query';
-import {Button} from '@/components/ui/button';
+import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '@/components/ui/resizable';
 import {Toaster} from '@/components/ui/sonner';
-import {ThemeDemo} from '@/components/ThemeDemo';
+import {AppHeader} from '@/components/AppHeader';
+import {AppSidebar} from '@/components/AppSidebar';
+import {EmptyState} from '@/components/EmptyState';
+import {MainTabs} from '@/components/MainTabs';
+import {StatusBar} from '@/components/StatusBar';
+import {SIDEBAR_PANEL_ID, useSidebarCollapse} from '@/hooks/useSidebarCollapse';
 import {createQueryClient} from '@/lib/queryClient';
-import {exampleBindOptions} from '@/lib/exampleBind';
+import {useRepoStore} from '@/stores/repo';
+import {useState} from 'react';
 
 function App() {
     const [queryClient] = useState(createQueryClient);
-    const [bindResult, setBindResult] = useState('Go binding not called yet');
-
-    const pingBackend = () => {
-        // Invalidate first so every click reaches Go; passive reads keep
-        // honoring the global staleTime.
-        queryClient
-            .invalidateQueries(exampleBindOptions)
-            .then(() => queryClient.query(exampleBindOptions))
-            .then(setBindResult)
-            .catch((err) => setBindResult(String(err)));
-    };
+    const repoOpen = useRepoStore((s) => s.isOpen);
+    const sidebar = useSidebarCollapse();
 
     return (
         <QueryClientProvider client={queryClient}>
-            <div className="flex h-screen font-sans">
-                <aside className="w-72 shrink-0 overflow-y-auto border-r border-sidebar-border bg-sidebar p-4 text-sidebar-foreground" data-testid="sidebar">
-                    Sidebar
-                </aside>
-                <main className="flex-1 overflow-y-auto bg-background" data-testid="main-panel">
-                    <div className="flex items-center gap-2 border-b border-border p-4">
-                        <p className="text-sm" data-testid="bind-result">
-                            {bindResult}
-                        </p>
-                        <Button size="sm" onClick={pingBackend}>
-                            Ping Go backend
-                        </Button>
-                    </div>
-                    <ThemeDemo />
-                </main>
-                <Toaster />
+            <div className="flex h-screen flex-col font-sans">
+                <AppHeader sidebarOpen={sidebar.isOpen} onToggleSidebar={sidebar.toggle} />
+                <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
+                    <ResizablePanel
+                        id={SIDEBAR_PANEL_ID}
+                        defaultSize={22}
+                        minSize={12}
+                        maxSize={45}
+                        collapsible
+                        collapsedSize={0}
+                        onCollapse={sidebar.onCollapse}
+                        onExpand={sidebar.onExpand}
+                        ref={sidebar.panelRef}
+                    >
+                        <AppSidebar />
+                    </ResizablePanel>
+                    <ResizableHandle withHandle />
+                    <ResizablePanel minSize={40}>
+                        <main className="flex h-full flex-col">{repoOpen ? <MainTabs /> : <EmptyState />}</main>
+                    </ResizablePanel>
+                </ResizablePanelGroup>
+                <StatusBar />
             </div>
+            <Toaster />
         </QueryClientProvider>
     );
 }

@@ -5,7 +5,6 @@
  * means adding one factory here, so invalidation stays enumerable.
  */
 export const queryKeys = {
-    exampleBind: () => ['example-bind'] as const,
     status: (repoPath: string) => ['status', repoPath] as const,
     log: (repoPath: string, params: {branch?: string; limit?: number} = {}) =>
         ['log', repoPath, params] as const,
