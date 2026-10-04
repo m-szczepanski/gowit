@@ -14,7 +14,7 @@ go vet ./... && gofmt -l .  # must both be clean before any commit
 go test -cover ./...        # backend tests with coverage
 wails dev                   # hot-reload dev app
 wails build                 # production binary into build/bin/
-cd frontend && npm run test && npm run build  # frontend once #4 lands
+cd frontend && npm run lint && npm run test && npm run build  # frontend
 ```
 
 Dependencies: Go ≥ 1.25 (Wails v2.16 floor), Node ≥ 20, `git` on PATH, Wails CLI (`go install github.com/wailsapp/wails/v2/cmd/wails@latest`).
@@ -42,6 +42,7 @@ Context hygiene: planning stays in one unbroken context window through `/to-tick
 
 ## Design standards
 
+- **Design lint gates UI changes.** After touching `frontend/`, run `npm run lint` (@shadcn/lint) and fix all errors. Component styling contracts live in `frontend/eslint.config.mjs`; extend them instead of restyling primitives with raw classes.
 - **YAGNI first.** No speculative generality, no hooks for imagined futures. Prefactor: make the change easy, then make the easy change.
 - **Deep modules** (see `skills/engineering/codebase-design/`): small interface, real implementation behind a clean seam. Apply the deletion test to anything suspected shallow. Use that skill's vocabulary exactly: module, interface, implementation, depth, seam, adapter, leverage, locality. Avoid "component", "service", "boundary".
 - **DRY without premature abstraction.** Duplicated code is a review smell; a wrong abstraction is worse. Two similar blocks mean look for the real concept, not a helper.

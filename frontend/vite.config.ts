@@ -18,9 +18,11 @@ export default defineConfig({
     test: {
         globals: true,
         environment: 'jsdom',
+        setupFiles: ['./vitest.setup.ts'],
         coverage: {
             include: ['src/**'],
-            exclude: ['src/main.tsx', 'src/vite-env.d.ts'],
+            // main.tsx is the entrypoint; components/ui is vendored shadcn code (registry-managed, not ours to test)
+            exclude: ['src/main.tsx', 'src/vite-env.d.ts', 'src/components/ui/**'],
             thresholds: {
                 lines: 100,
                 functions: 100,
