@@ -6,7 +6,7 @@ Closes #<issue>
 
 ## Verification
 
-- [ ] `go vet ./ ./internal/...`, `gofmt -l .`, `go test -cover ./ ./internal/...` clean
+- [ ] `go vet ./ ./internal/...`, `gofmt -l $(git ls-files '*.go')`, `go test -cover ./ ./internal/...` clean
 - [ ] `cd frontend && npm run lint && npm run coverage && npm run build` clean
 - [ ] `wails dev` runs the change; `wails build` produces a binary (if the change touches anything the shell wires up)
 - [ ] Uncovered changed lines, if any, explained below (required by AGENTS.md)

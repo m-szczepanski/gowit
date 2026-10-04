@@ -4,6 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -11,8 +15,12 @@ concurrency:
 
 jobs:
   backend:
-    name: Go vet/build/test
-    runs-on: ubuntu-latest
+    name: Go vet/build/test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -24,12 +32,16 @@ jobs:
         run: git --version
 
       - name: gofmt
-        run: test -z "$(gofmt -l .)"
+        # git ls-files keeps gofmt out of frontend/node_modules, where third-party
+        # .go files live after npm install
+        shell: bash
+        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
 
       - name: vet and build
         run: |
           go vet ./ ./internal/...
           go build ./ ./internal/...
+        shell: bash
 
       - name: test with coverage
         run: go test -cover ./ ./internal/...
@@ -88,6 +100,7 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev
 
       - name: install Wails CLI
+        # keep in sync with the wails/v2 version in go.mod
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
 
       - name: build
