@@ -62,6 +62,58 @@
     /* geometry */
     --radius: 0.5rem;
   }
+
+  .dark {
+    /* neutrals - navy base matching the window background (27, 38, 54) */
+    --background: 218 33% 16%;
+    --foreground: 210 40% 96%;
+    --card: 219 32% 20%;
+    --card-foreground: 210 40% 96%;
+    --popover: 219 32% 20%;
+    --popover-foreground: 210 40% 96%;
+    --secondary: 219 28% 26%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 219 28% 26%;
+    --muted-foreground: 215 20% 70%;
+    --accent: 219 28% 30%;
+    --accent-foreground: 210 40% 96%;
+    --border: 219 26% 32%;
+    --input: 219 26% 32%;
+    --ring: 152 52% 48%;
+
+    /* brand */
+    --primary: 152 52% 48%;
+    --primary-foreground: 218 33% 10%;
+
+    /* semantic */
+    --success: 142 55% 52%;
+    --warning: 36 90% 58%;
+    --destructive: 0 68% 58%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* diff viewer */
+    --diff-add: 142 35% 26%;
+    --diff-add-foreground: 142 55% 78%;
+    --diff-remove: 0 38% 28%;
+    --diff-remove-foreground: 0 70% 80%;
+
+    /* charts */
+    --chart-1: 152 52% 48%;
+    --chart-2: 199 85% 60%;
+    --chart-3: 262 60% 68%;
+    --chart-4: 36 90% 58%;
+    --chart-5: 0 68% 58%;
+
+    /* sidebar */
+    --sidebar: 219 32% 13%;
+    --sidebar-foreground: 210 40% 96%;
+    --sidebar-primary: 152 52% 48%;
+    --sidebar-primary-foreground: 218 33% 10%;
+    --sidebar-accent: 219 28% 24%;
+    --sidebar-accent-foreground: 210 40% 96%;
+    --sidebar-border: 219 26% 26%;
+    --sidebar-ring: 152 52% 48%;
+  }
 }
 
 @layer base {
