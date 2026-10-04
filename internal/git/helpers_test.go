@@ -21,7 +21,7 @@ func commitAll(t *testing.T, dir, msg string) {
 	if _, _, err := runGit(ctx, dir, "add", "-A"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := runGit(ctx, dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", msg); err != nil {
+	if _, _, err := runGit(ctx, dir, "commit", "-m", msg); err != nil {
 		t.Fatal(err)
 	}
 }

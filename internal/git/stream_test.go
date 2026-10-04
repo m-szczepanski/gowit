@@ -9,8 +9,7 @@ import (
 
 func commitRepo(t *testing.T, dir, msg string) {
 	t.Helper()
-	if _, _, err := runGit(context.Background(), dir,
-		"-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", msg); err != nil {
+	if _, _, err := runGit(context.Background(), dir, "commit", "--allow-empty", "-m", msg); err != nil {
 		t.Fatal(err)
 	}
 }

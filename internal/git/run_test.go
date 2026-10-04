@@ -75,15 +75,17 @@ func TestRunGitKillsOnContextTimeout(t *testing.T) {
 	dir := initRepo(t)
 	hook := filepath.Join(dir, ".git", "hooks", "pre-commit")
 	// a blocking hook keeps git alive past the deadline on every OS:
-	// Git for Windows runs hooks through its bundled sh, where sleep exists
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+	// Git for Windows runs hooks through its bundled sh, where sleep exists.
+	// sleep must finish before the test ends or its sh keeps the temp dir
+	// locked and t.TempDir cleanup fails on Windows
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nsleep 2\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	_, _, err := runGit(ctx, dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "slow")
+	_, _, err := runGit(ctx, dir, "commit", "--allow-empty", "-m", "slow")
 	elapsed := time.Since(started)
 
 	var gitErr *GitError
@@ -114,14 +116,16 @@ func TestRunGitSurvivesPipeHoldingGrandchild(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, stderr, err := runGit(context.Background(), dir,
-		"-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "held")
+	out, stderr, err := runGit(context.Background(), dir, "commit", "--allow-empty", "-m", "held")
 	if err != nil {
 		t.Fatalf("successful commit with pipe-holding grandchild failed: %v (stderr %q)", err, stderr)
 	}
 	if !strings.Contains(string(out), "held") {
 		t.Fatalf("stdout = %q, want commit summary", out)
 	}
+	// let the detached holder exit before t.TempDir cleanup; on Windows a
+	// live grandchild keeps the repo directory locked
+	time.Sleep(1 * time.Second)
 }
 
 func TestBuildGitCmdSetsWorkdirMachineFlagsAndEnv(t *testing.T) {
