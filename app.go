@@ -18,6 +18,12 @@ func NewApp() *App {
 	return &App{}
 }
 
+// ExampleBind proves the TS <-> Go binding round-trip (issue #4).
+// It will be removed once real bound methods land.
+func (a *App) ExampleBind() string {
+	return "gowit backend is reachable"
+}
+
 // startup is called when the app starts. The context is saved
 // so we can call runtime methods.
 func (a *App) startup(ctx context.Context) {

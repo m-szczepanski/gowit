@@ -15,6 +15,13 @@ func TestNewApp(t *testing.T) {
 	}
 }
 
+func TestExampleBind(t *testing.T) {
+	app := NewApp()
+	if got := app.ExampleBind(); got != "gowit backend is reachable" {
+		t.Fatalf("ExampleBind returned %q, want %q", got, "gowit backend is reachable")
+	}
+}
+
 func TestStartupShutdown(t *testing.T) {
 	app := NewApp()
 	ctx := context.Background()
