@@ -11,9 +11,12 @@ function App() {
     const [bindResult, setBindResult] = useState('Go binding not called yet');
 
     const pingBackend = () => {
+        // A deliberate ping marks the key stale first, so query() always
+        // refetches live from Go while the global staleTime still governs
+        // passive reads.
         queryClient
-            // staleTime 0: a deliberate ping always goes live to Go, unlike background reads
-            .fetchQuery({...exampleBindOptions, staleTime: 0})
+            .invalidateQueries(exampleBindOptions)
+            .then(() => queryClient.query(exampleBindOptions))
             .then(setBindResult)
             .catch((err) => setBindResult(String(err)));
     };

@@ -13,8 +13,8 @@ describe('Go call as queryFn (example bind)', () => {
         call.mockResolvedValue('gowit backend is reachable');
 
         const client = createQueryClient();
-        const first = await client.fetchQuery(exampleBindOptions);
-        const second = await client.fetchQuery(exampleBindOptions);
+        const first = await client.query(exampleBindOptions);
+        const second = await client.query(exampleBindOptions);
 
         expect(first).toBe('gowit backend is reachable');
         expect(second).toBe('gowit backend is reachable');
@@ -27,7 +27,7 @@ describe('Go call as queryFn (example bind)', () => {
         call.mockRejectedValue(new Error('go: binding missing'));
 
         const client = createQueryClient();
-        await expect(client.fetchQuery(exampleBindOptions)).rejects.toThrow('go: binding missing');
+        await expect(client.query(exampleBindOptions)).rejects.toThrow('go: binding missing');
         expect(call).toHaveBeenCalledTimes(1);
     });
 });

@@ -46,8 +46,22 @@ describe('bindInvalidatingEvents', () => {
         expect(queryFn).toHaveBeenCalledTimes(2);
     });
 
-    it('accepts the real wails runtime EventsOn as the source', () => {
-        const source: EventSource = {on: EventsOn};
-        expect(typeof source.on).toBe('function');
+    it('routes subscriptions through the wails runtime module and unsubscribes on cleanup', () => {
+        const unsubscribe = vi.fn();
+        const eventsOnMultiple = vi.fn().mockReturnValue(unsubscribe);
+        (window as unknown as {runtime: unknown}).runtime = {EventsOnMultiple: eventsOnMultiple};
+        try {
+            const client = createQueryClient();
+            const cleanup = bindInvalidatingEvents(client, {on: EventsOn}, [
+                {event: 'repo:changed', queryKey: queryKeys.status('/repo')}
+            ]);
+
+            expect(eventsOnMultiple).toHaveBeenCalledWith('repo:changed', expect.any(Function), -1);
+
+            cleanup();
+            expect(unsubscribe).toHaveBeenCalledTimes(1);
+        } finally {
+            delete (window as unknown as {runtime: unknown}).runtime;
+        }
     });
 });
