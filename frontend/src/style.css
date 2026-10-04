@@ -8,7 +8,8 @@
  * Never hardcode a color in a component; reference these vars.
  */
 @layer base {
-  :root {
+  :root,
+  .light {
     /* neutrals */
     --background: 0 0% 100%;
     --foreground: 222 47% 11%;
@@ -32,7 +33,9 @@
 
     /* semantic */
     --success: 142 64% 38%;
+    --success-foreground: 0 0% 100%;
     --warning: 32 90% 46%;
+    --warning-foreground: 26 83% 12%;
     --destructive: 0 72% 48%;
     --destructive-foreground: 0 0% 100%;
 
@@ -87,7 +90,9 @@
 
     /* semantic */
     --success: 142 55% 52%;
+    --success-foreground: 218 33% 10%;
     --warning: 36 90% 58%;
+    --warning-foreground: 218 33% 10%;
     --destructive: 0 68% 58%;
     --destructive-foreground: 0 0% 100%;
 

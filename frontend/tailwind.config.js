@@ -59,8 +59,14 @@ export default {
   				DEFAULT: 'hsl(var(--destructive))',
   				foreground: 'hsl(var(--destructive-foreground))'
   			},
-  			success: 'hsl(var(--success))',
-  			warning: 'hsl(var(--warning))',
+  			success: {
+  				DEFAULT: 'hsl(var(--success))',
+  				foreground: 'hsl(var(--success-foreground))'
+  			},
+  			warning: {
+  				DEFAULT: 'hsl(var(--warning))',
+  				foreground: 'hsl(var(--warning-foreground))'
+  			},
   			'diff-add': {
   				DEFAULT: 'hsl(var(--diff-add))',
   				foreground: 'hsl(var(--diff-add-foreground))'

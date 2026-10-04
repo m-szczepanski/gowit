@@ -18,6 +18,7 @@ export default defineConfig({
     test: {
         globals: true,
         environment: 'jsdom',
+        setupFiles: ['./vitest.setup.ts'],
         coverage: {
             include: ['src/**'],
             // main.tsx is the entrypoint; components/ui is vendored shadcn code (registry-managed, not ours to test)
