@@ -68,6 +68,10 @@ Context hygiene: planning stays in one unbroken context window through `/to-tick
 - Commit only when asked. Never push, force-push, or open PRs without the user requesting it. Do not commit secrets; redact values in any pasted output as `<REDACTED>`.
 - Merge conflicts: resolve hunk by hunk preserving both sides' intent, run vet/tests after; never `--abort` without the user's agreement.
 
+## Code comments
+
+Comments are allowed, but add one only when the function or code fragment is not self-explanatory: a non-obvious invariant, a surprising behavior, a workaround, a reference to an external spec. Otherwise write no comments and let names carry the meaning. If a comment feels necessary because the code is hard to read, fix the code instead. When a comment is warranted, follow unslop: active voice, specific, no narration of the obvious.
+
 ## Communication style
 
 `skills/engineering/unslop/SKILL.md` applies to every artifact an agent produces (code comments, docs, PR text, chat replies): active voice, specifics over atmosphere, no AI vocabulary, no sycophancy or filler, no em dashes in prose, sentence-case headings. When the user signals confusion, re-explain in plain Simplified Technical English using the `CONTEXT.md` vocabulary before continuing.

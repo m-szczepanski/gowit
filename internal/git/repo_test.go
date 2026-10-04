@@ -3,6 +3,7 @@ package git
 import (
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,8 +57,14 @@ func TestOpenRejectsMissingDirectory(t *testing.T) {
 }
 
 func TestOpenWithoutGitOnPath(t *testing.T) {
+	dir := initRepo(t)
 	t.Setenv("PATH", "")
-	if _, err := Open("/tmp"); err == nil {
-		t.Fatal("Open without git on PATH: want error, got nil")
+
+	_, err := Open(dir)
+	if err == nil {
+		t.Fatal("Open on a real repo without git on PATH: want error, got nil")
+	}
+	if want := "git executable not found on PATH"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("Open error = %q, want it to mention %q", err, want)
 	}
 }

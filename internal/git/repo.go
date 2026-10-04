@@ -4,6 +4,7 @@
 package git
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,12 @@ import (
 // Repo represents an open git repository on disk.
 type Repo struct {
 	path string
+}
+
+// runGit is the single seam for shelling out to git (ARCHITECTURE.md §3):
+// working directory, context cancellation and output live here and nowhere else.
+func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).Output()
 }
 
 // Open verifies that path is a git work tree and returns a Repo for it.
@@ -23,7 +30,7 @@ func Open(path string) (*Repo, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return nil, fmt.Errorf("git executable not found on PATH: %w", err)
 	}
-	out, err := exec.Command("git", "-C", abs, "rev-parse", "--is-inside-work-tree").Output()
+	out, err := runGit(context.Background(), abs, "rev-parse", "--is-inside-work-tree")
 	if err != nil || string(out) != "true\n" {
 		return nil, fmt.Errorf("%q is not a git repository", abs)
 	}
@@ -35,8 +42,8 @@ func (r *Repo) Path() string {
 	return r.path
 }
 
-// Close releases any resources held by the Repo. It is currently a
-// placeholder for future cleanup (watchers, in-flight commands).
+// Close is a placeholder: no resources are held yet. Watchers and
+// in-flight git commands will register their cleanup here.
 func (r *Repo) Close() error {
 	return nil
 }

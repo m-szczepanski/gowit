@@ -11,16 +11,13 @@ type UiState = {
     selectFile: (path: string | null) => void;
 };
 
-/**
- * Pure view state: which panel is visible and what is selected in it.
- * A new commit selection clears the file selection, so the diff panel
- * never shows a file from the previous commit.
- */
 export const useUiStore = create<UiState>((set) => ({
     activePanel: 'status',
     selectedCommit: null,
     selectedFile: null,
     setActivePanel: (panel) => set({activePanel: panel}),
+    // Clearing the file selection keeps the diff panel from showing a file
+    // that does not exist in the newly selected commit.
     selectCommit: (hash) => set({selectedCommit: hash, selectedFile: null}),
     selectFile: (path) => set({selectedFile: path})
 }));
