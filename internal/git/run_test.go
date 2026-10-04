@@ -103,13 +103,39 @@ func TestRunGitKillsOnContextTimeout(t *testing.T) {
 	}
 }
 
+func TestRunGitSurvivesPipeHoldingGrandchild(t *testing.T) {
+	dir := initRepo(t)
+	commitRepo(t, dir, "base")
+	// detached post-commit holder keeps stdout's write-end open past the
+	// 2s WaitDelay after git itself exited 0: Run returns ErrWaitDelay,
+	// the operation must still count as success
+	hook := filepath.Join(dir, ".git", "hooks", "post-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nsleep 3 2>/dev/null &\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, stderr, err := runGit(context.Background(), dir,
+		"-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "held")
+	if err != nil {
+		t.Fatalf("successful commit with pipe-holding grandchild failed: %v (stderr %q)", err, stderr)
+	}
+	if !strings.Contains(string(out), "held") {
+		t.Fatalf("stdout = %q, want commit summary", out)
+	}
+}
+
 func TestBuildGitCmdSetsWorkdirMachineFlagsAndEnv(t *testing.T) {
 	cmd := buildGitCmd(context.Background(), filepath.Join("some", "dir"), "status", "--porcelain=v2")
 
 	if cmd.Dir != filepath.Join("some", "dir") {
 		t.Fatalf("cmd.Dir = %q", cmd.Dir)
 	}
-	wantArgs := []string{"--no-pager", "-c", "color.ui=never", "status", "--porcelain=v2"}
+	wantArgs := []string{"--no-pager",
+		"-c", "color.ui=never",
+		"-c", "color.diff=never",
+		"-c", "color.status=never",
+		"-c", "color.branch=never",
+		"status", "--porcelain=v2"}
 	if len(cmd.Args) != len(wantArgs)+1 { // argv[0] is the binary path
 		t.Fatalf("cmd.Args = %q, want %q prefixed by git", cmd.Args, wantArgs)
 	}
@@ -125,8 +151,9 @@ func TestBuildGitCmdSetsWorkdirMachineFlagsAndEnv(t *testing.T) {
 			t.Fatalf("env missing %s: %v", want, env)
 		}
 	}
-	// user configuration must still be honored (credential helpers, aliases)
-	if !slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "HOME=") }) {
-		t.Fatal("os.Environ base not preserved")
+	// user configuration must still be honored (credential helpers, aliases):
+	// the full parent environment is carried, machine vars only appended
+	if len(cmd.Env) != len(os.Environ())+3 {
+		t.Fatalf("env = %d entries, want os.Environ (%d) + 3 defaults", len(cmd.Env), len(os.Environ()))
 	}
 }

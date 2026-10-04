@@ -17,22 +17,20 @@ func TestRunGitPullWithoutUpstreamMapsNoUpstream(t *testing.T) {
 }
 
 func TestRunGitMergeConflictMapsConflict(t *testing.T) {
-	dir := initRepo(t)
-	writeFile(t, dir, "a.txt", "one\n")
-	commitAll(t, dir, "base")
-	base := currentBranch(t, dir)
-
-	runGit(context.Background(), dir, "checkout", "-qb", "feature")
-	writeFile(t, dir, "a.txt", "feature line\n")
-	commitAll(t, dir, "feature change")
-
-	runGit(context.Background(), dir, "checkout", "-q", base)
-	writeFile(t, dir, "a.txt", "master line\n")
-	commitAll(t, dir, "master change")
+	dir := conflictingRepo(t)
 
 	_, stderr, err := runGit(context.Background(), dir, "merge", "feature")
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("err = %v, want ErrConflict; stderr=%q", err, stderr)
+	}
+}
+
+func TestRunGitStreamMergeConflictMapsConflict(t *testing.T) {
+	dir := conflictingRepo(t)
+
+	err := runGitStream(context.Background(), dir, func(string) {}, "merge", "feature")
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict", err)
 	}
 }
 

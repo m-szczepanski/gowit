@@ -34,3 +34,26 @@ func currentBranch(t *testing.T, dir string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// conflictingRepo: base commit, feature and base both editing a.txt differently.
+func conflictingRepo(t *testing.T) string {
+	t.Helper()
+	dir := initRepo(t)
+	ctx := context.Background()
+	writeFile(t, dir, "a.txt", "one\n")
+	commitAll(t, dir, "base")
+	base := currentBranch(t, dir)
+
+	if _, _, err := runGit(ctx, dir, "checkout", "-qb", "feature"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "a.txt", "feature line\n")
+	commitAll(t, dir, "feature change")
+
+	if _, _, err := runGit(ctx, dir, "checkout", "-q", base); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "a.txt", "base line\n")
+	commitAll(t, dir, "base change")
+	return dir
+}

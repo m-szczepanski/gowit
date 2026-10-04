@@ -49,10 +49,10 @@ var (
 // classify maps a failed run's combined output to a GitError. ctx completion
 // wins over git output: a killed git prints whatever it liked before dying.
 func classify(ctx context.Context, output string, exitCode int) *GitError {
-	message := firstLine(output)
 	if ctx.Err() != nil {
 		return &GitError{Code: CodeTimeout, Message: "git killed: " + ctx.Err().Error(), ExitCode: exitCode}
 	}
+	message := firstLine(output)
 	code := CodeCommandFailed
 	switch {
 	case strings.Contains(output, "not a git repository"):
