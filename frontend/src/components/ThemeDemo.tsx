@@ -39,20 +39,22 @@ function PrimitivePanel({testId, title}: PanelProps) {
                     <TabsTrigger value="status">Status</TabsTrigger>
                     <TabsTrigger value="log">Log</TabsTrigger>
                 </TabsList>
-                <TabsContent value="status" className="text-sm">
-                    2 files changed
+                <TabsContent value="status">
+                    <p className="text-sm">2 files changed</p>
                 </TabsContent>
-                <TabsContent value="log" className="text-sm">
-                    a1b2c3 HEAD fix: thing
+                <TabsContent value="log">
+                    <p className="text-sm">a1b2c3 HEAD fix: thing</p>
                 </TabsContent>
             </Tabs>
 
-            <ScrollArea className="h-24 rounded-md border p-2">
-                {Array.from({length: 8}, (_, i) => (
-                    <p key={i} className="font-mono text-xs leading-5">
-                        line {i + 1}
-                    </p>
-                ))}
+            <ScrollArea className="h-24">
+                <div className="rounded-md border p-2">
+                    {Array.from({length: 8}, (_, i) => (
+                        <p key={i} className="font-mono text-xs leading-5">
+                            line {i + 1}
+                        </p>
+                    ))}
+                </div>
             </ScrollArea>
 
             <div className="font-mono text-xs">

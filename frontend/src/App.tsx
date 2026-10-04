@@ -14,11 +14,11 @@ function App() {
     };
 
     return (
-        <div className="grid h-screen grid-cols-[280px_1fr] font-sans">
-            <aside className="overflow-y-auto border-r border-sidebar-border bg-sidebar p-4 text-sidebar-foreground" data-testid="sidebar">
+        <div className="flex h-screen font-sans">
+            <aside className="w-72 shrink-0 overflow-y-auto border-r border-sidebar-border bg-sidebar p-4 text-sidebar-foreground" data-testid="sidebar">
                 Sidebar
             </aside>
-            <main className="overflow-y-auto bg-background" data-testid="main-panel">
+            <main className="flex-1 overflow-y-auto bg-background" data-testid="main-panel">
                 <div className="flex items-center gap-2 border-b border-border p-4">
                     <p className="text-sm" data-testid="bind-result">
                         {bindResult}

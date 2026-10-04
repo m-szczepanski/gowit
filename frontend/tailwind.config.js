@@ -3,8 +3,8 @@ export default {
   darkMode: ['class'],
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
-  	extend: {
-  		fontFamily: {
+   	extend: {
+   		fontFamily: {
   			sans: [
   				'-apple-system',
   				'BlinkMacSystemFont',
