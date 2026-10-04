@@ -46,7 +46,7 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
 
       - name: build
-        run: wails build -silent
+        run: wails build
 
       - name: bundle macOS app
         if: matrix.os == 'macos-latest'
