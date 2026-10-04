@@ -54,7 +54,7 @@ jobs:
         run: cd build/bin && ditto -c -k --sequesterRsrc gowit.app gowit.app.zip
 
       - name: upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gowit-${{ matrix.os }}
           path: |
