@@ -39,12 +39,9 @@ func TestOpenFolderDelegatesToPicker(t *testing.T) {
 		return "/home/user/project", nil
 	}
 
-	path, err := app.OpenFolder()
-	if err != nil {
-		t.Fatalf("OpenFolder: %v", err)
-	}
-	if path != "/home/user/project" {
-		t.Fatalf("path = %q, want %q", path, "/home/user/project")
+	got := app.OpenFolder()
+	if got.Path != "/home/user/project" || got.Code != "" {
+		t.Fatalf("OpenFolder = %+v, want path set, no code", got)
 	}
 	if gotCtx != app.ctx {
 		t.Fatal("picker must receive the startup context")
@@ -56,21 +53,25 @@ func TestOpenFolderCancelReturnsEmpty(t *testing.T) {
 	app.startup(context.Background())
 	app.pickFolder = func(context.Context) (string, error) { return "", nil }
 
-	path, err := app.OpenFolder()
-	if err != nil || path != "" {
-		t.Fatalf("OpenFolder on cancel = (%q, %v), want empty", path, err)
+	got := app.OpenFolder()
+	if got.Path != "" || got.Code != "" {
+		t.Fatalf("OpenFolder on cancel = %+v, want empty result", got)
 	}
 }
 
-func TestOpenFolderPropagatesPickerError(t *testing.T) {
+func TestOpenFolderCarriesTypedError(t *testing.T) {
 	app := NewApp()
 	app.startup(context.Background())
 	app.pickFolder = func(context.Context) (string, error) {
 		return "", errors.New("dialog unavailable")
 	}
 
-	if _, err := app.OpenFolder(); err == nil {
-		t.Fatal("want picker error to propagate")
+	got := app.OpenFolder()
+	if got.Code != dialogFailedCode {
+		t.Fatalf("Code = %q, want %q", got.Code, dialogFailedCode)
+	}
+	if got.Message != "dialog unavailable" {
+		t.Fatalf("Message = %q, want picker error text", got.Message)
 	}
 }
 

@@ -1,6 +1,8 @@
 import {useCallback, useRef, useState} from 'react';
 import type {ImperativePanelHandle} from 'react-resizable-panels';
 
+export const SIDEBAR_PANEL_ID = 'sidebar-panel';
+
 /**
  * Single source of truth for sidebar open/closed state. Button toggles call
  * the panel ref; panel-driven changes (drag collapse/expand) arrive through

@@ -1,5 +1,6 @@
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '@/components/ui/tabs';
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '@/components/ui/resizable';
+import type {PanelId} from '@/stores/ui';
 import {useUiStore} from '@/stores/ui';
 
 export function MainTabs() {
@@ -10,7 +11,7 @@ export function MainTabs() {
         <Tabs
             className="flex h-full min-h-0"
             value={activePanel}
-            onValueChange={(v) => setActivePanel(v as Parameters<typeof setActivePanel>[0])}
+            onValueChange={(v) => setActivePanel(v as PanelId)}
         >
             <TabsList className="mx-3 mt-2">
                 <TabsTrigger value="status">Status</TabsTrigger>

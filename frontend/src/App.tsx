@@ -6,7 +6,7 @@ import {AppSidebar} from '@/components/AppSidebar';
 import {EmptyState} from '@/components/EmptyState';
 import {MainTabs} from '@/components/MainTabs';
 import {StatusBar} from '@/components/StatusBar';
-import {useSidebarCollapse} from '@/hooks/useSidebarCollapse';
+import {SIDEBAR_PANEL_ID, useSidebarCollapse} from '@/hooks/useSidebarCollapse';
 import {createQueryClient} from '@/lib/queryClient';
 import {useRepoStore} from '@/stores/repo';
 import {useState} from 'react';
@@ -22,6 +22,7 @@ function App() {
                 <AppHeader sidebarOpen={sidebar.isOpen} onToggleSidebar={sidebar.toggle} />
                 <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
                     <ResizablePanel
+                        id={SIDEBAR_PANEL_ID}
                         defaultSize={22}
                         minSize={12}
                         maxSize={45}
@@ -34,7 +35,9 @@ function App() {
                         <AppSidebar />
                     </ResizablePanel>
                     <ResizableHandle withHandle />
-                    <ResizablePanel minSize={40}>{repoOpen ? <MainTabs /> : <EmptyState />}</ResizablePanel>
+                    <ResizablePanel minSize={40}>
+                        <main className="flex h-full flex-col">{repoOpen ? <MainTabs /> : <EmptyState />}</main>
+                    </ResizablePanel>
                 </ResizablePanelGroup>
                 <StatusBar />
             </div>

@@ -11,9 +11,11 @@ export function EmptyState() {
     const handleOpen = async () => {
         setError('');
         try {
-            const path = await OpenFolder();
-            if (path) {
-                openRepo(path);
+            const result = await OpenFolder();
+            if (result.code) {
+                setError(result.message);
+            } else if (result.path) {
+                openRepo(result.path);
             }
         } catch (err) {
             setError(String(err));

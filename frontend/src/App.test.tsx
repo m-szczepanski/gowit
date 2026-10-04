@@ -23,6 +23,7 @@ describe('App shell', () => {
         render(<App/>);
 
         expect(screen.getByRole('banner')).toBeTruthy();
+        expect(screen.getByRole('main')).toBeTruthy();
         expect(screen.getByRole('contentinfo')).toBeTruthy();
         expect(screen.getByLabelText('Repository panels')).toBeTruthy();
         expect(screen.getByTestId('empty-state').textContent).toContain('No repository open');
@@ -35,7 +36,7 @@ describe('App shell', () => {
     });
 
     it('opens the selected repository through the CTA and swaps in the main tabs', async () => {
-        (await openFolderMock()).mockResolvedValue('/home/user/project');
+        (await openFolderMock()).mockResolvedValue({path: '/home/user/project'});
         render(<App/>);
 
         fireEvent.click(screen.getByRole('button', {name: 'Open Folder'}));
@@ -49,20 +50,29 @@ describe('App shell', () => {
     });
 
     it('stays in the empty state when the dialog is cancelled', async () => {
-        (await openFolderMock()).mockResolvedValue('');
+        (await openFolderMock()).mockResolvedValue({path: ''});
         render(<App/>);
 
         fireEvent.click(screen.getByRole('button', {name: 'Open Folder'}));
         await waitFor(() => expect(screen.getByTestId('empty-state')).toBeTruthy());
     });
 
-    it('surfaces dialog errors without crashing', async () => {
-        (await openFolderMock()).mockRejectedValue(new Error('dialog unavailable'));
+    it('surfaces typed dialog failures', async () => {
+        (await openFolderMock()).mockResolvedValue({path: '', code: 'dialog_failed', message: 'native dialog unavailable'});
         render(<App/>);
 
         fireEvent.click(screen.getByRole('button', {name: 'Open Folder'}));
 
-        expect((await screen.findByTestId('open-error')).textContent).toBe('Error: dialog unavailable');
+        expect((await screen.findByTestId('open-error')).textContent).toBe('native dialog unavailable');
+    });
+
+    it('surfaces binding transport errors without crashing', async () => {
+        (await openFolderMock()).mockRejectedValue(new Error('binding unavailable'));
+        render(<App/>);
+
+        fireEvent.click(screen.getByRole('button', {name: 'Open Folder'}));
+
+        expect((await screen.findByTestId('open-error')).textContent).toBe('Error: binding unavailable');
     });
 
     it('switches main panel tabs from the ui store', async () => {

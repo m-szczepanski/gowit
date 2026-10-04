@@ -32,10 +32,25 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 }
 
-// OpenFolder shows the native folder picker and returns the chosen path,
-// or an empty string when the user cancels.
-func (a *App) OpenFolder() (string, error) {
-	return a.pickFolder(a.ctx)
+// FolderDialogResult is the typed outcome of the folder picker
+// (ARCHITECTURE.md §4: errors cross the boundary as code+message structs,
+// and Wails only ships err.Error() strings, so failures travel as values).
+type FolderDialogResult struct {
+	Path    string `json:"path"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+const dialogFailedCode = "dialog_failed"
+
+// OpenFolder shows the native folder picker. Path is empty on cancel;
+// Code is dialog_failed when the picker itself errored.
+func (a *App) OpenFolder() FolderDialogResult {
+	path, err := a.pickFolder(a.ctx)
+	if err != nil {
+		return FolderDialogResult{Code: dialogFailedCode, Message: err.Error()}
+	}
+	return FolderDialogResult{Path: path}
 }
 
 func runtimeOpenFolder(ctx context.Context) (string, error) {

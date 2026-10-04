@@ -1,5 +1,6 @@
 import {defineConfig} from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import {fileURLToPath} from 'node:url'
 
 export default defineConfig({
     plugins: [react()],
@@ -24,6 +25,12 @@ export default defineConfig({
         globals: true,
         environment: 'jsdom',
         setupFiles: ['./vitest.setup.ts'],
+        // vitest resolves react-resizable-panels' node build by default; its
+        // no-op layout effect never registers panels, so collapse/expand
+        // throws. Pin tests to the same browser build the app ships.
+        alias: {
+            'react-resizable-panels': fileURLToPath(new URL('./node_modules/react-resizable-panels/dist/react-resizable-panels.browser.esm.js', import.meta.url))
+        },
         coverage: {
             include: ['src/**'],
             // main.tsx is the entrypoint; components/ui is vendored shadcn code (registry-managed, not ours to test)
