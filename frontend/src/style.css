@@ -117,10 +117,15 @@
 }
 
 @layer base {
-  * {
-    @apply border-border;
+  /* App density: 14px root anchors the rem-based tailwind scale (4px grid)
+   * for a compact, git-GUI-appropriate layout. */
+  html {
+    font-size: 14px;
   }
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+  * {
+    @apply border-border;
   }
 }
