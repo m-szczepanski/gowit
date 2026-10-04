@@ -15,12 +15,6 @@ type Repo struct {
 	path string
 }
 
-// runGit is the single seam for shelling out to git (ARCHITECTURE.md §3):
-// working directory, context cancellation and output live here and nowhere else.
-func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).Output()
-}
-
 // Open verifies that path is a git work tree and returns a Repo for it.
 func Open(path string) (*Repo, error) {
 	abs, err := filepath.Abs(path)
@@ -30,9 +24,10 @@ func Open(path string) (*Repo, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return nil, fmt.Errorf("git executable not found on PATH: %w", err)
 	}
-	out, err := runGit(context.Background(), abs, "rev-parse", "--is-inside-work-tree")
-	if err != nil || string(out) != "true\n" {
-		return nil, fmt.Errorf("%q is not a git repository", abs)
+	// git reports a missing repository with exit 128 and a "not a git
+	// repository" fatal, which classify maps to ErrNotARepository.
+	if _, _, err := runGit(context.Background(), abs, "rev-parse", "--is-inside-work-tree"); err != nil {
+		return nil, err
 	}
 	return &Repo{path: abs}, nil
 }
