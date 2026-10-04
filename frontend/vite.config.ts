@@ -9,6 +9,12 @@ export default defineConfig({
         }
     },
     clearScreen: false,
+    build: {
+        // dist/.gitkeep is committed (main.go //go:embed needs the dir on a
+        // fresh clone); the prebuild script removes stale output instead,
+        // since emptyOutDir:true would wipe the tracked placeholder
+        emptyOutDir: false
+    },
     server: {
         // Wails discovers this port for hot-reload via "frontend:dev:serverUrl": "auto"
         port: 5173,

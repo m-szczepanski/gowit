@@ -1,45 +1,66 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
+# --- Go ---
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-
-# Test binary, built with `go test -c`
 *.test
-
-# Code coverage profiles and other test artifacts
 *.out
-coverage.*
 *.coverprofile
 profile.cov
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
+coverage.*
 go.work
 go.work.sum
 
-# env file
-.env
+# Bare `go build ./` lands the binary at the repo root
+/gowit
 
-# Editor/IDE
-# .idea/
-# .vscode/
+# --- Node / frontend ---
+node_modules/
+.eslintcache
+*.tsbuildinfo
+*.log
+*.log.*
 
-# Wails
-build/bin
-node_modules
-frontend/dist
+# Keep the embed placeholder: main.go //go:embed all:frontend/dist needs the
+# directory to exist on a fresh clone, but not the vite build output.
+frontend/dist/*
+!frontend/dist/.gitkeep
 
-# Local agent skills (not committed)
-skills/
-
-# macOS
-.DS_Store
+# Wails regenerates this hash of package.json next to it
 frontend/package.json.md5
-frontend/coverage/
+
+# Generated TS bindings: TRACKED on purpose. tsc, eslint and vitest must run
+# (incl. in CI) without the Wails toolchain; `wails build/dev` regenerates
+# them and any drift shows up in the diff for review.
+
+# --- Wails build output ---
+build/bin/
+
+# --- Test output ---
+coverage/
+test-results/
+playwright-report/
+blob-report/
+
+# --- Env / local overrides ---
+.env
+.env.*
+!.env.example
+!.env.sample
+*.local
+
+# --- Editors / IDEs ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Local agent skills library (see AGENTS.md) ---
+skills/
