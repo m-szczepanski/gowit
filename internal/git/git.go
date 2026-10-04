@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -51,4 +52,58 @@ func exitCodeOf(runErr error) int {
 		return exitErr.ExitCode()
 	}
 	return -1
+}
+
+// lineSplitter accumulates writes and forwards completed lines; stdout and
+// stderr each get one instance, so onLine may be called concurrently per
+// stream but never concurrently for the same stream.
+type lineSplitter struct {
+	onLine   func(line string)
+	partial  strings.Builder
+	captured *bytes.Buffer // optional full copy, for stderr classification
+}
+
+func (w *lineSplitter) Write(p []byte) (int, error) {
+	if w.captured != nil {
+		w.captured.Write(p)
+	}
+	text := w.partial.String() + string(p)
+	w.partial.Reset()
+	for len(text) > 0 {
+		i := strings.IndexByte(text, '\n')
+		if i < 0 {
+			w.partial.WriteString(text)
+			break
+		}
+		w.onLine(strings.TrimRight(text[:i], "\r"))
+		text = text[i+1:]
+	}
+	return len(p), nil
+}
+
+func (w *lineSplitter) flush() {
+	if rest := w.partial.String(); rest != "" {
+		w.onLine(rest)
+		w.partial.Reset()
+	}
+}
+
+// runGitStream executes git and feeds each output line (stdout and stderr;
+// fetch/push progress lands on stderr) to onLine while the process runs.
+// Use it for long ops that must surface progress; runGit for reads.
+func runGitStream(ctx context.Context, repoPath string, onLine func(line string), args ...string) error {
+	cmd := buildGitCmd(ctx, repoPath, args...)
+	var stderr bytes.Buffer
+	out := &lineSplitter{onLine: onLine}
+	errOut := &lineSplitter{onLine: onLine, captured: &stderr}
+	cmd.Stdout = out
+	cmd.Stderr = errOut
+
+	runErr := cmd.Run()
+	out.flush()
+	errOut.flush()
+	if runErr != nil {
+		return classify(ctx, stderr.String(), exitCodeOf(runErr))
+	}
+	return nil
 }
