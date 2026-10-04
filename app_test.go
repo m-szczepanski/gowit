@@ -4,8 +4,20 @@ import (
 	"context"
 	"testing"
 
+	"gowit/internal/config"
 	"gowit/internal/git"
+	"gowit/internal/watcher"
 )
+
+// Compile-and-instantiate proof for issue #7's acceptance criterion:
+// all internal packages are importable and usable from the app layer.
+func TestInternalPackagesImportable(t *testing.T) {
+	_ = watcher.Watcher{}
+	_ = config.Settings{Theme: "dark"}
+	_ = config.Profile{RepoPath: "/tmp/repo"}
+	_ = git.FileStatus{Path: "main.go", Status: "1 A."}
+	_ = git.Commit{Hash: "a1b2c3d", Subject: "initial commit"}
+}
 
 func TestNewApp(t *testing.T) {
 	app := NewApp()
