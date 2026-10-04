@@ -59,7 +59,7 @@ func TestAddRecentIgnoresEmptyPath(t *testing.T) {
 	if len(s.RecentRepos()) != 0 {
 		t.Fatal("empty path must not be recorded")
 	}
-	if _, err := os.Stat(s.path()); !os.IsNotExist(err) {
+	if _, err := os.Stat(s.file); !os.IsNotExist(err) {
 		t.Fatal("no-op add must not create the file")
 	}
 }
@@ -75,14 +75,14 @@ func TestAddRecentKeepsPathsWithoutGitValidation(t *testing.T) {
 	}
 }
 
-func TestSaveIsAtomic(t *testing.T) {
+func TestSaveLeavesOnlyTheConfigFile(t *testing.T) {
 	s := storeIn(t)
 
 	if err := s.SetSettings(Settings{Theme: "light"}); err != nil {
 		t.Fatal(err)
 	}
 
-	entries, err := os.ReadDir(filepath.Dir(s.path()))
+	entries, err := os.ReadDir(filepath.Dir(s.file))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,10 +93,10 @@ func TestSaveIsAtomic(t *testing.T) {
 
 func TestLoadFillsMissingTheme(t *testing.T) {
 	s := storeIn(t)
-	if err := os.MkdirAll(filepath.Dir(s.path()), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.file), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(s.path(), []byte(`{"settings":{}}`), 0o644); err != nil {
+	if err := os.WriteFile(s.file, []byte(`{"settings":{}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

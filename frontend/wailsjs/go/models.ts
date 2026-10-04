@@ -65,9 +65,9 @@ export namespace main {
 	    }
 	}
 	export class FolderDialogResult {
-	    path: string;
 	    code: string;
 	    message: string;
+	    path: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new FolderDialogResult(source);
@@ -75,9 +75,9 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.path = source["path"];
 	        this.code = source["code"];
 	        this.message = source["message"];
+	        this.path = source["path"];
 	    }
 	}
 

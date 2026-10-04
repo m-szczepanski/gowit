@@ -33,6 +33,13 @@ type CallResult struct {
 	Message string `json:"message"`
 }
 
+// FolderDialogResult carries the picker outcome: Path is the chosen folder
+// (empty on cancel); Code dialog_failed marks a picker error.
+type FolderDialogResult struct {
+	CallResult
+	Path string `json:"path"`
+}
+
 const saveFailedCode = "save_failed"
 
 // GetSettings returns the persisted user settings (defaults when absent).
@@ -81,23 +88,13 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 }
 
-// FolderDialogResult is the typed outcome of the folder picker
-// (ARCHITECTURE.md §4: errors cross the boundary as code+message structs,
-// and Wails only ships err.Error() strings, so failures travel as values).
-type FolderDialogResult struct {
-	Path    string `json:"path"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
 const dialogFailedCode = "dialog_failed"
 
-// OpenFolder shows the native folder picker. Path is empty on cancel;
-// Code is dialog_failed when the picker itself errored.
+// OpenFolder shows the native folder picker.
 func (a *App) OpenFolder() FolderDialogResult {
 	path, err := a.pickFolder(a.ctx)
 	if err != nil {
-		return FolderDialogResult{Code: dialogFailedCode, Message: err.Error()}
+		return FolderDialogResult{CallResult: CallResult{Code: dialogFailedCode, Message: err.Error()}}
 	}
 	// Recording recents is best effort: an opened folder must not be lost
 	// just because the settings file could not be written.

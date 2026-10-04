@@ -8,7 +8,7 @@ import {useRepoStore} from '@/stores/repo';
 export function EmptyState() {
     const [error, setError] = useState('');
     const openRepo = useRepoStore((s) => s.openRepo);
-    const {repos} = useRecentRepos();
+    const repos = useRecentRepos();
 
     const handleOpen = async () => {
         setError('');
@@ -26,6 +26,8 @@ export function EmptyState() {
 
     const reopen = (path: string) => {
         openRepo(path);
+        // move-to-front persistence is best effort: if the save fails the
+        // next launch just shows the older order
         void AddRecentRepo(path);
     };
 
@@ -38,16 +40,12 @@ export function EmptyState() {
             </div>
             <Button onClick={handleOpen}>Open Folder</Button>
             {repos.length > 0 && (
-                <ul className="w-full max-w-md space-y-1 px-4" data-testid="recent-repos">
+                <ul aria-label="Recent repositories" className="w-full max-w-md space-y-1 px-4" data-testid="recent-repos">
                     {repos.map((repo) => (
                         <li key={repo.path}>
-                            <button
-                                type="button"
-                                className="w-full truncate rounded px-2 py-1 text-left font-mono text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                                onClick={() => reopen(repo.path)}
-                            >
-                                {repo.path}
-                            </button>
+                            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => reopen(repo.path)}>
+                                <span className="min-w-0 flex-1 truncate font-mono text-left text-xs">{repo.path}</span>
+                            </Button>
                         </li>
                     ))}
                 </ul>

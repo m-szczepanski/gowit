@@ -224,9 +224,9 @@ func TestResolveConfigFileFallsBackToTempWhenNoHome(t *testing.T) {
 	if res := app.SetSettings(config.Settings{Theme: "light"}); res.Code != "" {
 		t.Fatalf("SetSettings = %+v", res)
 	}
-	fallback := filepath.Join(os.TempDir(), "gowit", "config.json")
-	if _, err := os.Stat(fallback); err != nil {
-		t.Fatalf("fallback config missing at %s: %v", fallback, err)
+	fallbackDir := filepath.Join(os.TempDir(), "gowit")
+	t.Cleanup(func() { _ = os.RemoveAll(fallbackDir) })
+	if _, err := os.Stat(filepath.Join(fallbackDir, "config.json")); err != nil {
+		t.Fatalf("fallback config missing under %s: %v", fallbackDir, err)
 	}
-	t.Cleanup(func() { _ = os.Remove(fallback) })
 }

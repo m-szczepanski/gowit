@@ -27,7 +27,7 @@ func TestSettingsAndRecentsDefaultWhenFileMissing(t *testing.T) {
 	if got := s.RecentRepos(); len(got) != 0 {
 		t.Fatalf("recents = %v, want empty", got)
 	}
-	if _, err := os.Stat(s.path()); !os.IsNotExist(err) {
+	if _, err := os.Stat(s.file); !os.IsNotExist(err) {
 		t.Fatal("load alone must not create the config file")
 	}
 }
@@ -39,7 +39,7 @@ func TestSetSettingsPersistsAcrossStores(t *testing.T) {
 		t.Fatalf("SetSettings: %v", err)
 	}
 
-	reopened := NewStore(s.path(), fixedClock())
+	reopened := NewStore(s.file, fixedClock())
 	if got := reopened.Settings().Theme; got != "light" {
 		t.Fatalf("Theme after reopen = %q, want light", got)
 	}
@@ -47,10 +47,10 @@ func TestSetSettingsPersistsAcrossStores(t *testing.T) {
 
 func TestCorruptFileFallsBackToDefaultsAndHeals(t *testing.T) {
 	s := storeIn(t)
-	if err := os.MkdirAll(filepath.Dir(s.path()), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.file), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(s.path(), []byte("{not json"), 0o644); err != nil {
+	if err := os.WriteFile(s.file, []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -60,7 +60,7 @@ func TestCorruptFileFallsBackToDefaultsAndHeals(t *testing.T) {
 	if err := s.SetSettings(Settings{Theme: "light"}); err != nil {
 		t.Fatalf("SetSettings: %v", err)
 	}
-	raw, err := os.ReadFile(s.path())
+	raw, err := os.ReadFile(s.file)
 	if err != nil {
 		t.Fatal(err)
 	}
