@@ -36,7 +36,20 @@ export default {
   				DEFAULT: 'hsl(var(--accent))',
   				foreground: 'hsl(var(--accent-foreground))'
   			},
-  			destructive: 'hsl(var(--destructive))',
+  			destructive: {
+  				DEFAULT: 'hsl(var(--destructive))',
+  				foreground: 'hsl(var(--destructive-foreground))'
+  			},
+  			success: 'hsl(var(--success))',
+  			warning: 'hsl(var(--warning))',
+  			'diff-add': {
+  				DEFAULT: 'hsl(var(--diff-add))',
+  				foreground: 'hsl(var(--diff-add-foreground))'
+  			},
+  			'diff-remove': {
+  				DEFAULT: 'hsl(var(--diff-remove))',
+  				foreground: 'hsl(var(--diff-remove-foreground))'
+  			},
   			border: 'hsl(var(--border))',
   			input: 'hsl(var(--input))',
   			ring: 'hsl(var(--ring))',
