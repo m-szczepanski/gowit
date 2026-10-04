@@ -14,6 +14,13 @@ func initRepo(t *testing.T) string {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init failed: %v: %s", err, out)
 	}
+	// CI runners have no global git identity; merge/commit would abort with
+	// "Committer identity unknown" regardless of what the test intends
+	for _, kv := range [][2]string{{"user.email", "t@t"}, {"user.name", "test"}} {
+		if out, err := exec.Command("git", "-C", dir, "config", kv[0], kv[1]).CombinedOutput(); err != nil {
+			t.Fatalf("git config %s: %v: %s", kv[0], err, out)
+		}
+	}
 	return dir
 }
 
