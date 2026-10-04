@@ -49,7 +49,7 @@ Detailed architecture and technical decisions: [`ARCHITECTURE.md`](./ARCHITECTUR
 
 ## Requirements
 
-- Go ≥ 1.22
+- Go ≥ 1.25 (required by Wails v2.16)
 - Node.js ≥ 20
 - `git` installed and available on the system PATH
 - [Wails CLI](https://wails.io/docs/gettingstarted/installation)
