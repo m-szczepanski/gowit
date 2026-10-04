@@ -9,13 +9,15 @@ gowit: a lightweight, cross-platform Git GUI. Go backend, Wails v2 shell, React 
 ## Commands
 
 ```bash
-go build ./...              # compile backend
-go vet ./... && gofmt -l .  # must both be clean before any commit
-go test -cover ./...        # backend tests with coverage
-wails dev                   # hot-reload dev app
-wails build                 # production binary into build/bin/
+go build ./ ./internal/...                 # compile backend
+go vet ./ ./internal/... && gofmt -l .     # must both be clean before any commit
+go test -cover ./ ./internal/...           # backend tests with coverage
+wails dev                                  # hot-reload dev app
+wails build                                # production binary into build/bin/
 cd frontend && npm run lint && npm run test && npm run build  # frontend
 ```
+
+Scope Go commands to `./ ./internal/...`: `./...` also matches stray Go files under `frontend/node_modules` (e.g. `flatted/golang`) and drags them into builds.
 
 Dependencies: Go ≥ 1.25 (Wails v2.16 floor), Node ≥ 20, `git` on PATH, Wails CLI (`go install github.com/wailsapp/wails/v2/cmd/wails@latest`).
 

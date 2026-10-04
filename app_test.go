@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"testing"
+
+	"gowit/internal/git"
 )
 
 func TestNewApp(t *testing.T) {
@@ -32,4 +34,16 @@ func TestStartupShutdown(t *testing.T) {
 	}
 
 	app.shutdown(ctx)
+}
+
+func TestShutdownClosesOpenRepo(t *testing.T) {
+	app := NewApp()
+	app.startup(context.Background())
+	app.repo = &git.Repo{}
+
+	app.shutdown(context.Background())
+
+	if app.repo != nil {
+		t.Fatal("shutdown should close and clear the repo")
+	}
 }
