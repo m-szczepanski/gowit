@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"gowit/internal/config"
@@ -29,10 +30,47 @@ func TestNewApp(t *testing.T) {
 	}
 }
 
-func TestExampleBind(t *testing.T) {
+func TestOpenFolderDelegatesToPicker(t *testing.T) {
 	app := NewApp()
-	if got := app.ExampleBind(); got != "gowit backend is reachable" {
-		t.Fatalf("ExampleBind returned %q, want %q", got, "gowit backend is reachable")
+	app.startup(context.Background())
+	var gotCtx context.Context
+	app.pickFolder = func(ctx context.Context) (string, error) {
+		gotCtx = ctx
+		return "/home/user/project", nil
+	}
+
+	path, err := app.OpenFolder()
+	if err != nil {
+		t.Fatalf("OpenFolder: %v", err)
+	}
+	if path != "/home/user/project" {
+		t.Fatalf("path = %q, want %q", path, "/home/user/project")
+	}
+	if gotCtx != app.ctx {
+		t.Fatal("picker must receive the startup context")
+	}
+}
+
+func TestOpenFolderCancelReturnsEmpty(t *testing.T) {
+	app := NewApp()
+	app.startup(context.Background())
+	app.pickFolder = func(context.Context) (string, error) { return "", nil }
+
+	path, err := app.OpenFolder()
+	if err != nil || path != "" {
+		t.Fatalf("OpenFolder on cancel = (%q, %v), want empty", path, err)
+	}
+}
+
+func TestOpenFolderPropagatesPickerError(t *testing.T) {
+	app := NewApp()
+	app.startup(context.Background())
+	app.pickFolder = func(context.Context) (string, error) {
+		return "", errors.New("dialog unavailable")
+	}
+
+	if _, err := app.OpenFolder(); err == nil {
+		t.Fatal("want picker error to propagate")
 	}
 }
 
