@@ -6,11 +6,12 @@
 // persistence is implemented here on purpose.
 package config
 
-// Settings holds user preferences; more fields land with the settings screen.
+// Settings holds user preferences: theme now, more to accumulate here.
 type Settings struct {
 	Theme string
 }
 
+// Profile is one repository the user has opened.
 type Profile struct {
 	RepoPath string
 }

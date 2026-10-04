@@ -9,11 +9,13 @@ import (
 	"gowit/internal/watcher"
 )
 
+// No assertions by design: instantiating each type proves the packages
+// compile and are importable from the app layer (issue #7 acceptance).
 func TestInternalPackagesImportable(t *testing.T) {
 	_ = watcher.Watcher{}
 	_ = config.Settings{Theme: "dark"}
 	_ = config.Profile{RepoPath: "/tmp/repo"}
-	_ = git.FileStatus{Path: "main.go", Status: "1 A."}
+	_ = git.FileStatus{Path: "main.go", Status: "M."}
 	_ = git.Commit{Hash: "a1b2c3d", Subject: "initial commit"}
 }
 

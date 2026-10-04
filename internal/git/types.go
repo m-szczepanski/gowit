@@ -7,8 +7,7 @@ type FileStatus struct {
 	Status string
 }
 
-// Commit is one entry from `git log --format=...`, the columns filled in
-// by the history task.
+// Commit is one entry from `git log --format=...`.
 type Commit struct {
 	Hash    string
 	Subject string

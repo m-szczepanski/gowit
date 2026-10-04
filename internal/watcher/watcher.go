@@ -5,6 +5,5 @@
 // files that signal repo state: .git/HEAD, .git/refs/, .git/index.
 package watcher
 
-// Watcher is an empty placeholder until the watcher task implements it;
-// see the strategy in the package comment.
+// Watcher is an empty placeholder; nothing is watched yet.
 type Watcher struct{}
