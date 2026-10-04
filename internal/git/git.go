@@ -39,7 +39,9 @@ func runGit(ctx context.Context, repoPath string, args ...string) (stdout, stder
 	cmd.Stderr = &errOut
 
 	if runErr := cmd.Run(); runErr != nil {
-		return out.Bytes(), errOut.Bytes(), classify(ctx, errOut.String(), exitCodeOf(runErr))
+		// git puts status lines (merge CONFLICT) on stdout, errors on stderr;
+		// classify against both so signatures are caught wherever they land
+		return out.Bytes(), errOut.Bytes(), classify(ctx, errOut.String()+"\n"+out.String(), exitCodeOf(runErr))
 	}
 	return out.Bytes(), errOut.Bytes(), nil
 }

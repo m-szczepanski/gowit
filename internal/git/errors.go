@@ -46,18 +46,27 @@ var (
 	ErrCommandFailed  = &GitError{Code: CodeCommandFailed}
 )
 
-// classify maps a failed run to a GitError. ctx completion wins over stderr
-// text: a killed git prints whatever it liked before dying.
-func classify(ctx context.Context, stderr string, exitCode int) *GitError {
-	message := firstLine(stderr)
+// classify maps a failed run's combined output to a GitError. ctx completion
+// wins over git output: a killed git prints whatever it liked before dying.
+func classify(ctx context.Context, output string, exitCode int) *GitError {
+	message := firstLine(output)
 	if ctx.Err() != nil {
 		return &GitError{Code: CodeTimeout, Message: "git killed: " + ctx.Err().Error(), ExitCode: exitCode}
 	}
+	code := CodeCommandFailed
 	switch {
-	case strings.Contains(stderr, "not a git repository"):
-		return &GitError{Code: CodeNotARepository, Message: message, ExitCode: exitCode}
+	case strings.Contains(output, "not a git repository"):
+		code = CodeNotARepository
+	case strings.Contains(output, "no tracking information"),
+		strings.Contains(output, "no upstream"):
+		code = CodeNoUpstream
+	case strings.Contains(output, "CONFLICT ("):
+		code = CodeConflict
+	case strings.Contains(output, "terminal prompts disabled"),
+		strings.Contains(output, "Authentication failed"):
+		code = CodeAuthFailed
 	}
-	return &GitError{Code: CodeCommandFailed, Message: message, ExitCode: exitCode}
+	return &GitError{Code: code, Message: message, ExitCode: exitCode}
 }
 
 func firstLine(s string) string {
