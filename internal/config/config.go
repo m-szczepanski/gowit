@@ -1,17 +1,30 @@
-// Package config holds user settings and opened-repository profiles.
-//
-// Open decision (ARCHITECTURE.md §10): storage format is undecided —
-// JSON under ~/.config/gowit/ vs. SQLite once repo history metadata
-// lands. Until chosen, callers pass these structs in memory only; no
-// persistence is implemented here on purpose.
 package config
+
+import "time"
+
+// DefaultTheme anchors the dark UI while system-aware theming lands (#14).
+const DefaultTheme = "dark"
+
+// MaxRecentRepos is the recents cap; the oldest entry is dropped.
+const MaxRecentRepos = 10
 
 // Settings holds user preferences: theme now, more to accumulate here.
 type Settings struct {
-	Theme string
+	Theme string `json:"theme"`
 }
 
-// Profile is one repository the user has opened.
-type Profile struct {
-	RepoPath string
+// RecentRepo is one repository the user opened, with its last open time.
+type RecentRepo struct {
+	Path       string    `json:"path"`
+	LastOpened time.Time `json:"lastOpened"`
+}
+
+// Config is the persisted document.
+type Config struct {
+	Settings    Settings     `json:"settings"`
+	RecentRepos []RecentRepo `json:"recentRepos"`
+}
+
+func newDefaults() *Config {
+	return &Config{Settings: Settings{Theme: DefaultTheme}}
 }

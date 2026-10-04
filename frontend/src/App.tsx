@@ -7,6 +7,7 @@ import {EmptyState} from '@/components/EmptyState';
 import {MainTabs} from '@/components/MainTabs';
 import {StatusBar} from '@/components/StatusBar';
 import {SIDEBAR_PANEL_ID, useSidebarCollapse} from '@/hooks/useSidebarCollapse';
+import {useSettings} from '@/hooks/useSettings';
 import {createQueryClient} from '@/lib/queryClient';
 import {useRepoStore} from '@/stores/repo';
 import {useState} from 'react';
@@ -15,6 +16,9 @@ function App() {
     const [queryClient] = useState(createQueryClient);
     const repoOpen = useRepoStore((s) => s.isOpen);
     const sidebar = useSidebarCollapse();
+
+    // loads persisted settings and applies the theme at startup (#12)
+    useSettings();
 
     return (
         <QueryClientProvider client={queryClient}>

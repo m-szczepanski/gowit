@@ -144,5 +144,5 @@ To detect changes in the working directory (so the UI refreshes status without a
 ## 10. Open Questions / Decisions for Later
 
 - Should GPG signing be supported from the UI, or rely on the user's system-level configuration?
-- User settings storage format (JSON under `~/.config/gowit/` vs. SQLite if things like a history of opened repos with metadata get added)
+- ~~User settings storage format~~ — decided in #12: **JSON** at `<platform-config-dir>/gowit/config.json` (load/save/recents in `internal/config`). Atomic tmp+rename write, self-healing defaults on corrupt data. Revisit SQLite if opened-repo history needs queryable metadata beyond the capped recents list.
 - Should the commit graph render as SVG or move straight to Canvas/WebGL with scalability in mind?
