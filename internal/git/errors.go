@@ -12,6 +12,8 @@ type ErrorCode string
 
 const (
 	CodeNotARepository ErrorCode = "not_a_repository"
+	CodeBareRepository ErrorCode = "bare_repository"
+	CodePathMissing    ErrorCode = "path_missing"
 	CodeNoUpstream     ErrorCode = "no_upstream"
 	CodeConflict       ErrorCode = "conflict"
 	CodeAuthFailed     ErrorCode = "auth_failed"
@@ -39,6 +41,8 @@ func (e *GitError) Is(target error) bool {
 // Sentinels for errors.Is; the zero Message/ExitCode are placeholders, only Code participates in Is.
 var (
 	ErrNotARepository = &GitError{Code: CodeNotARepository}
+	ErrBareRepository = &GitError{Code: CodeBareRepository}
+	ErrPathMissing    = &GitError{Code: CodePathMissing}
 	ErrNoUpstream     = &GitError{Code: CodeNoUpstream}
 	ErrConflict       = &GitError{Code: CodeConflict}
 	ErrAuthFailed     = &GitError{Code: CodeAuthFailed}

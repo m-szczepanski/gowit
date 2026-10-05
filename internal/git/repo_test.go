@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -58,8 +59,9 @@ func TestOpenRejectsPlainDirectory(t *testing.T) {
 
 func TestOpenRejectsMissingDirectory(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope")
-	if _, err := Open(missing); err == nil {
-		t.Fatalf("Open(%q): want error, got nil", missing)
+	_, err := Open(missing)
+	if !errors.Is(err, ErrPathMissing) {
+		t.Fatalf("Open(%q): err = %v, want ErrPathMissing", missing, err)
 	}
 }
 
