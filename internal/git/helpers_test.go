@@ -57,3 +57,24 @@ func conflictingRepo(t *testing.T) string {
 	commitAll(t, dir, "base change")
 	return dir
 }
+
+func openStatus(t *testing.T, dir string) *StatusResult {
+	t.Helper()
+	repo, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := repo.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	return res
+}
+
+func statusByPath(res *StatusResult) map[string]FileStatus {
+	m := map[string]FileStatus{}
+	for _, f := range res.Files {
+		m[f.Path] = f
+	}
+	return m
+}

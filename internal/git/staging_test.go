@@ -9,28 +9,6 @@ import (
 	"testing"
 )
 
-func openStatus(t *testing.T, dir string) *StatusResult {
-	t.Helper()
-	repo, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := repo.Status(context.Background())
-	if err != nil {
-		t.Fatalf("Status: %v", err)
-	}
-	return res
-}
-
-func stageMap(t *testing.T, dir string) map[string]FileStatus {
-	t.Helper()
-	m := map[string]FileStatus{}
-	for _, f := range openStatus(t, dir).Files {
-		m[f.Path] = f
-	}
-	return m
-}
-
 func TestStageAddsGivenPathOnly(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "a.txt", "a\n", "add a")
@@ -46,7 +24,7 @@ func TestStageAddsGivenPathOnly(t *testing.T) {
 		t.Fatalf("Stage: %v", err)
 	}
 
-	m := stageMap(t, dir)
+	m := statusByPath(openStatus(t, dir))
 	if f := m["a.txt"]; f.XY != "M." {
 		t.Fatalf("a.txt = %+v, want staged M.", f)
 	}
@@ -70,7 +48,7 @@ func TestStageHandlesSpacesAndUnicodePaths(t *testing.T) {
 		t.Fatalf("Stage: %v", err)
 	}
 
-	m := stageMap(t, dir)
+	m := statusByPath(openStatus(t, dir))
 	if m["two words.txt"].XY != "M." || m["żółw.png"].XY != "M." {
 		t.Fatalf("nothing staged: %+v", m)
 	}
@@ -107,7 +85,7 @@ func TestUnstageKeepsWorktreeChanges(t *testing.T) {
 		t.Fatalf("Unstage: %v", err)
 	}
 
-	m := stageMap(t, dir)
+	m := statusByPath(openStatus(t, dir))
 	if f := m["a.txt"]; f.XY != ".M" || f.Staged() {
 		t.Fatalf("a.txt = %+v, want unstaged modified", f)
 	}
@@ -161,7 +139,7 @@ func TestStageAllAndUnstageAll(t *testing.T) {
 		t.Fatalf("StageAll: %v", err)
 	}
 
-	m := stageMap(t, dir)
+	m := statusByPath(openStatus(t, dir))
 	if m["a.txt"].XY != "M." || !m["new.txt"].Staged() || m["gone.txt"].XY != "D." {
 		t.Fatalf("after StageAll = %+v", m)
 	}
@@ -169,7 +147,7 @@ func TestStageAllAndUnstageAll(t *testing.T) {
 	if err := repo.UnstageAll(ctx); err != nil {
 		t.Fatalf("UnstageAll: %v", err)
 	}
-	m = stageMap(t, dir)
+	m = statusByPath(openStatus(t, dir))
 	for _, f := range m {
 		if f.Staged() {
 			t.Fatalf("%s still staged after UnstageAll: %+v", f.Path, f)
@@ -253,7 +231,52 @@ func TestDiscardChangesFailsWhenRepoVanished(t *testing.T) {
 	if _, err := repo.Status(context.Background()); err == nil {
 		t.Fatal("precondition: Status should fail")
 	}
-	if err := repo.DiscardChanges(context.Background(), "a.txt"); err == nil {
-		t.Fatal("want error when the work tree is gone")
+	err = repo.DiscardChanges(context.Background(), "a.txt")
+	if !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want command_failed GitError", err)
+	}
+}
+
+func TestDiscardLeavesStagedChangesAlone(t *testing.T) {
+	dir := initRepo(t)
+	commitFile(t, dir, "a.txt", "head\n", "add a")
+	writeFile(t, dir, "a.txt", "staged\n")
+	addFile(t, dir, "a.txt", "staged\n")
+	writeFile(t, dir, "a.txt", "staged+worktree\n")
+	if f := statusByPath(openStatus(t, dir))["a.txt"]; f.XY != "MM" {
+		t.Fatalf("precondition: a.txt = %+v, want MM", f)
+	}
+
+	repo, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DiscardChanges(context.Background(), "a.txt"); err != nil {
+		t.Fatalf("DiscardChanges: %v", err)
+	}
+
+	if f := statusByPath(openStatus(t, dir))["a.txt"]; f.XY != "M." {
+		t.Fatalf("a.txt = %+v, want worktree edit reverted, staged content kept (M.)", f)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if err != nil || string(content) != "staged\n" {
+		t.Fatalf("work tree not restored to index: %q %v", content, err)
+	}
+}
+
+func TestDiscardRemovesUnicodeUntracked(t *testing.T) {
+	dir := initRepo(t)
+	commitFile(t, dir, "a.txt", "a\n", "add a")
+	writeFile(t, dir, "żółw śmieć.tmp", "temp\n")
+
+	repo, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DiscardChanges(context.Background(), "żółw śmieć.tmp"); err != nil {
+		t.Fatalf("DiscardChanges: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "żółw śmieć.tmp")); !os.IsNotExist(err) {
+		t.Fatalf("unicode untracked file survived: %v", err)
 	}
 }

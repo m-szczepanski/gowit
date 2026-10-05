@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"slices"
 )
 
 // Paths travel as argv after a literal "--": no shell and no glob
@@ -9,7 +10,7 @@ import (
 // reject empty path lists because git's own no-pathspec variants either
 // no-op successfully (add) or act on the whole work tree (reset, clean).
 
-func (r *Repo) pathsGuard(paths []string) error {
+func pathsGuard(paths []string) error {
 	if len(paths) == 0 {
 		return &GitError{Code: CodeCommandFailed, Message: "at least one path required", ExitCode: -1}
 	}
@@ -17,14 +18,14 @@ func (r *Repo) pathsGuard(paths []string) error {
 }
 
 func (r *Repo) runPathOp(ctx context.Context, cmd string, flags []string, paths ...string) error {
-	args := append(append([]string{cmd}, flags...), append([]string{"--"}, paths...)...)
+	args := slices.Concat([]string{cmd}, flags, []string{"--"}, paths)
 	_, _, err := runGit(ctx, r.path, args...)
 	return err
 }
 
 // Stage adds the given paths to the index.
 func (r *Repo) Stage(ctx context.Context, paths ...string) error {
-	if err := r.pathsGuard(paths); err != nil {
+	if err := pathsGuard(paths); err != nil {
 		return err
 	}
 	return r.runPathOp(ctx, "add", nil, paths...)
@@ -37,7 +38,7 @@ func (r *Repo) Stage(ctx context.Context, paths ...string) error {
 // command itself. The project git floor is well above the 2.23 that
 // introduced restore.
 func (r *Repo) Unstage(ctx context.Context, paths ...string) error {
-	if err := r.pathsGuard(paths); err != nil {
+	if err := pathsGuard(paths); err != nil {
 		return err
 	}
 	return r.runPathOp(ctx, "restore", []string{"--staged"}, paths...)
@@ -56,13 +57,15 @@ func (r *Repo) UnstageAll(ctx context.Context) error {
 }
 
 // DiscardChanges reverts work-tree edits for tracked paths and deletes
-// untracked ones. Paths are classified via Status first: `git restore`
-// refuses untracked files, and handing untracked paths to a blanket clean
-// would delete directories nobody selected. Ignored and unknown paths fall
-// into the restore group, where git fails loudly, so they are never
-// cleaned.
+// untracked files. Paths are classified via Status first because `git
+// restore` refuses untracked files: they go to `git clean -qf` instead,
+// which (without -d) never touches untracked directories. Ignored and
+// unknown paths fall into the restore group, where git fails loudly, so
+// they are never cleaned. Restore sources from the index, so staged
+// changes are not discarded. If restore succeeds but clean fails, the
+// tracked half of the call has already been applied.
 func (r *Repo) DiscardChanges(ctx context.Context, paths ...string) error {
-	if err := r.pathsGuard(paths); err != nil {
+	if err := pathsGuard(paths); err != nil {
 		return err
 	}
 	st, err := r.Status(ctx)

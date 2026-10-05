@@ -80,10 +80,7 @@ func TestStatusReportsStagedAndUnstagedModifications(t *testing.T) {
 		t.Fatalf("Status: %v", err)
 	}
 
-	byPath := map[string]FileStatus{}
-	for _, f := range res.Files {
-		byPath[f.Path] = f
-	}
+	byPath := statusByPath(res)
 	if len(byPath) != 3 {
 		t.Fatalf("files = %+v, want a.txt b.txt c.txt", res.Files)
 	}
@@ -283,10 +280,7 @@ func TestStatusReportsDeleted(t *testing.T) {
 		t.Fatalf("Status: %v", err)
 	}
 
-	byPath := map[string]FileStatus{}
-	for _, f := range res.Files {
-		byPath[f.Path] = f
-	}
+	byPath := statusByPath(res)
 	if d := byPath["gone.txt"]; d.XY != ".D" || d.Change() != ChangeDeleted || !d.Unstaged() {
 		t.Fatalf("deleted = %+v, want unstaged .D", d)
 	}
