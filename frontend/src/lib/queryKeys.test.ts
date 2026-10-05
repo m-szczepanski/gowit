@@ -2,6 +2,10 @@ import {describe, expect, it} from 'vitest';
 import {queryKeys} from './queryKeys';
 
 describe('queryKeys', () => {
+    it('keys recent repos globally', () => {
+        expect(queryKeys.recentRepos()).toEqual(['recentRepos']);
+    });
+
     it('keys status by data name and repo path', () => {
         expect(queryKeys.status('/home/user/repo')).toEqual(['status', '/home/user/repo']);
     });

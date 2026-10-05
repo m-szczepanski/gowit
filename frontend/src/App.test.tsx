@@ -48,7 +48,7 @@ describe('App shell', () => {
         (await binding('GetRecentRepos')).mockResolvedValue([]);
         (await binding('AddRecentRepo')).mockResolvedValue({code: ''});
         (await binding('OpenFolder')).mockResolvedValue({path: ''});
-        (await binding('OpenRepository')).mockResolvedValue({code: ''});
+        (await binding('OpenRepository')).mockResolvedValue({code: '', path: '/default/repo'});
     });
 
     it('applies the persisted theme to the document on load', async () => {
@@ -98,6 +98,7 @@ describe('App shell', () => {
             {path: '/home/dev/alpha', lastOpened: '2026-03-01T09:00:00Z'},
             {path: '/home/dev/beta', lastOpened: '2026-02-28T09:00:00Z'}
         ]);
+        (await binding('OpenRepository')).mockResolvedValue({code: '', path: '/home/dev/beta'});
         await renderApp();
 
         const list = await screen.findByTestId('recent-repos');
@@ -110,7 +111,8 @@ describe('App shell', () => {
         expect(await binding('OpenRepository')).toHaveBeenCalledWith('/home/dev/beta');
     });
 
-    it('shows the backend validation hint when the picked folder is not a repo', async () => {        const hint = '"/srv/code" is not a repository, but /srv/code/gowit are - open one of them';
+    it('shows the backend validation hint when the picked folder is not a repo', async () => {
+        const hint = '"/srv/code" is not a repository, but /srv/code/gowit are - open one of them';
         (await binding('OpenFolder')).mockResolvedValue({path: '/srv/code'});
         (await binding('OpenRepository')).mockResolvedValue({code: 'not_a_repository', message: hint});
         render(<App/>);
@@ -126,6 +128,7 @@ describe('App shell', () => {
         const recentGet = (await binding('GetRecentRepos')).mockResolvedValue([
             {path: '/home/dev/alpha', lastOpened: '2026-03-01T09:00:00Z'}
         ]);
+        (await binding('OpenRepository')).mockResolvedValue({code: '', path: '/home/dev/alpha'});
         render(<App/>);
 
         openMenu(screen.getByRole('button', {name: 'Open'}));
@@ -180,6 +183,7 @@ describe('App shell', () => {
 
     it('opens the selected repository through the CTA and swaps in the main tabs', async () => {
         (await binding('OpenFolder')).mockResolvedValue({path: '/home/user/project'});
+        (await binding('OpenRepository')).mockResolvedValue({code: '', path: '/home/user/project'});
         await renderApp();
 
         fireEvent.click(screen.getByRole('button', {name: 'Open Folder'}));
@@ -216,6 +220,17 @@ describe('App shell', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Open Folder'}));
 
         expect((await screen.findByTestId('open-error')).textContent).toBe('Error: binding unavailable');
+    });
+
+    it('keeps the UI on the resolved work-tree root, not the picked subdirectory', async () => {
+        (await binding('OpenFolder')).mockResolvedValue({path: '/root/sub'});
+        (await binding('OpenRepository')).mockResolvedValue({code: '', path: '/root'});
+        await renderApp();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Open Folder'}));
+
+        await waitFor(() => expect(useRepoStore.getState().repoPath).toBe('/root'));
+        expect(screen.getByRole('heading', {name: 'root'})).toBeTruthy();
     });
 
     it('switches main panel tabs from the ui store', async () => {

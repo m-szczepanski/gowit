@@ -1,24 +1,17 @@
-import {useCallback, useEffect, useState} from 'react';
+import {useQuery} from '@tanstack/react-query';
 import {GetRecentRepos} from '../../wailsjs/go/main/App';
-import type {config} from '../../wailsjs/go/models';
+import {queryKeys} from '@/lib/queryKeys';
 
+/**
+ * Shared cached list (issue #12/#13 convention: Go call = queryFn). One
+ * query keeps every consumer - header menu and empty state - consistent;
+ * useOpenRepository invalidates the key after a successful open.
+ */
 export function useRecentRepos() {
-    const [repos, setRepos] = useState<config.RecentRepo[]>([]);
+    const query = useQuery({
+        queryKey: queryKeys.recentRepos(),
+        queryFn: () => GetRecentRepos()
+    });
 
-    const refresh = useCallback(
-        () =>
-            GetRecentRepos()
-                .then(setRepos)
-                .catch(() => {
-                    // an empty recents list is the only visible failure mode;
-                    // issue #14 will surface config errors
-                }),
-        []
-    );
-
-    useEffect(() => {
-        void refresh();
-    }, [refresh]);
-
-    return {repos, refresh};
+    return {repos: query.data ?? []};
 }

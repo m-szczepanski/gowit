@@ -27,15 +27,13 @@ type Props = {
 
 export function AppHeader({sidebarOpen, onToggleSidebar}: Props) {
     const repoPath = useRepoStore((s) => s.repoPath);
-    const {repos, refresh} = useRecentRepos();
+    const {repos} = useRecentRepos();
     const {open, browse} = useOpenRepository();
 
     const handle = async (outcome: Promise<OpenOutcome>) => {
         const result = await outcome;
         if (result.status === 'error') {
             toast.error(result.message);
-        } else if (result.status === 'ok') {
-            void refresh();
         }
     };
 
