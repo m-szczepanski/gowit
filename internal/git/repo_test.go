@@ -18,8 +18,11 @@ func initRepo(t *testing.T) string {
 		t.Fatalf("git init failed: %v: %s", err, out)
 	}
 	// CI runners have no global git identity; merge/commit would abort with
-	// "Committer identity unknown" regardless of what the test intends
-	for _, kv := range [][2]string{{"user.email", "t@t"}, {"user.name", "test"}} {
+	// "Committer identity unknown" regardless of what the test intends.
+	// core.autocrlf=false: Git for Windows ships a system-wide autocrlf=true,
+	// which turned LF content assertions into CRLF on restore/checkout there;
+	// repo-local config outranks it, so tests see the bytes they wrote.
+	for _, kv := range [][2]string{{"user.email", "t@t"}, {"user.name", "test"}, {"core.autocrlf", "false"}} {
 		if out, err := exec.Command("git", "-C", dir, "config", kv[0], kv[1]).CombinedOutput(); err != nil {
 			t.Fatalf("git config %s: %v: %s", kv[0], err, out)
 		}
