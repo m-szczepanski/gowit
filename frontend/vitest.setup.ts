@@ -14,3 +14,10 @@ Object.defineProperty(window, 'matchMedia', {
         dispatchEvent: vi.fn()
     }))
 });
+
+// jsdom lacks the pointer-capture APIs; Radix menus call them on pointerdown.
+Element.prototype.hasPointerCapture = () => false;
+Element.prototype.setPointerCapture = () => {
+};
+Element.prototype.releasePointerCapture = () => {
+};

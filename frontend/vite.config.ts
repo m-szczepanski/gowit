@@ -32,7 +32,7 @@ export default defineConfig({
             'react-resizable-panels': fileURLToPath(new URL('./node_modules/react-resizable-panels/dist/react-resizable-panels.browser.esm.js', import.meta.url))
         },
         coverage: {
-            include: ['src/**'],
+            include: ['src/**/*.ts', 'src/**/*.tsx'],
             // main.tsx is the entrypoint; components/ui is vendored shadcn code (registry-managed, not ours to test)
             exclude: ['src/main.tsx', 'src/vite-env.d.ts', 'src/components/ui/**'],
             thresholds: {

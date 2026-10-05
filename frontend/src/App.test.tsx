@@ -6,13 +6,14 @@ import {useUiStore} from '@/stores/ui';
 
 vi.mock('../wailsjs/go/main/App', () => ({
     OpenFolder: vi.fn(),
+    OpenRepository: vi.fn(),
     GetSettings: vi.fn(),
     SetSettings: vi.fn(),
     GetRecentRepos: vi.fn(),
     AddRecentRepo: vi.fn()
 }));
 
-type BindingName = 'OpenFolder' | 'GetSettings' | 'SetSettings' | 'GetRecentRepos' | 'AddRecentRepo';
+type BindingName = 'OpenFolder' | 'OpenRepository' | 'GetSettings' | 'SetSettings' | 'GetRecentRepos' | 'AddRecentRepo';
 
 async function binding(name: BindingName) {
     const mod = await import('../wailsjs/go/main/App');
@@ -27,14 +28,27 @@ async function renderApp() {
     return result;
 }
 
+// jsdom PointerEvents lack pointerType, which Radix's trigger gating
+// requires; replay a real mouse sequence instead of userEvent.click
+function openMenu(trigger: HTMLElement) {
+    fireEvent.pointerDown(trigger, {button: 0, pointers: 1, pointerType: 'mouse'});
+    fireEvent.pointerUp(trigger, {button: 0, pointers: 1, pointerType: 'mouse'});
+    fireEvent.click(trigger);
+}
+
 describe('App shell', () => {
     beforeEach(async () => {
         useRepoStore.getState().closeRepo();
         useUiStore.getState().setActivePanel('status');
         document.documentElement.classList.remove('dark');
+        for (const name of ['OpenFolder', 'OpenRepository', 'GetSettings', 'GetRecentRepos', 'AddRecentRepo'] as const) {
+            (await binding(name)).mockReset();
+        }
         (await binding('GetSettings')).mockResolvedValue({theme: 'dark'});
         (await binding('GetRecentRepos')).mockResolvedValue([]);
         (await binding('AddRecentRepo')).mockResolvedValue({code: ''});
+        (await binding('OpenFolder')).mockResolvedValue({path: ''});
+        (await binding('OpenRepository')).mockResolvedValue({code: ''});
     });
 
     it('applies the persisted theme to the document on load', async () => {
@@ -93,7 +107,75 @@ describe('App shell', () => {
 
         await waitFor(() => expect(screen.getByTestId('staging-view')).toBeTruthy());
         expect(useRepoStore.getState().repoPath).toBe('/home/dev/beta');
-        expect((await binding('AddRecentRepo'))).toHaveBeenCalledWith('/home/dev/beta');
+        expect(await binding('OpenRepository')).toHaveBeenCalledWith('/home/dev/beta');
+    });
+
+    it('shows the backend validation hint when the picked folder is not a repo', async () => {        const hint = '"/srv/code" is not a repository, but /srv/code/gowit are - open one of them';
+        (await binding('OpenFolder')).mockResolvedValue({path: '/srv/code'});
+        (await binding('OpenRepository')).mockResolvedValue({code: 'not_a_repository', message: hint});
+        render(<App/>);
+
+        fireEvent.click(screen.getByRole('button', {name: 'Open Folder'}));
+
+        expect((await screen.findByTestId('open-error')).textContent).toBe(hint);
+        expect(screen.getByTestId('empty-state')).toBeTruthy();
+        expect(useRepoStore.getState().repoPath).toBeNull();
+    });
+
+    it('reopens a recent repository from the header menu and refreshes the list', async () => {
+        const recentGet = (await binding('GetRecentRepos')).mockResolvedValue([
+            {path: '/home/dev/alpha', lastOpened: '2026-03-01T09:00:00Z'}
+        ]);
+        render(<App/>);
+
+        openMenu(screen.getByRole('button', {name: 'Open'}));
+        fireEvent.click(await screen.findByRole('menuitem', {name: '/home/dev/alpha'}));
+
+        await waitFor(() => expect(screen.getByTestId('staging-view')).toBeTruthy());
+        expect(await binding('OpenRepository')).toHaveBeenCalledWith('/home/dev/alpha');
+        expect(recentGet.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it('toasts dialog failures from the header browse action', async () => {
+        (await binding('OpenFolder')).mockResolvedValue({code: 'dialog_failed', message: 'native dialog unavailable'});
+        render(<App/>);
+
+        openMenu(screen.getByRole('button', {name: 'Open'}));
+        fireEvent.click(await screen.findByRole('menuitem', {name: 'Browse folders…'}));
+
+        expect(await screen.findByText('native dialog unavailable')).toBeTruthy();
+        expect(screen.queryByTestId('open-error')).toBeNull();
+    });
+
+    it('ignores a cancelled browse from the header', async () => {
+        (await binding('OpenFolder')).mockResolvedValue({path: ''});
+        render(<App/>);
+
+        openMenu(screen.getByRole('button', {name: 'Open'}));
+        fireEvent.click(await screen.findByRole('menuitem', {name: 'Browse folders…'}));
+
+        await waitFor(() => expect(screen.queryByRole('menuitem')).toBeNull());
+        expect(screen.getByTestId('empty-state')).toBeTruthy();
+        expect(await binding('OpenRepository')).not.toHaveBeenCalled();
+    });
+
+    it('reports a transport failure when reopening a recent repo', async () => {
+        (await binding('GetRecentRepos')).mockResolvedValue([{path: '/z', lastOpened: ''}]);
+        (await binding('OpenRepository')).mockRejectedValue(new Error('ipc down'));
+        render(<App/>);
+
+        fireEvent.click(await screen.findByRole('button', {name: '/z'}));
+
+        expect((await screen.findByTestId('open-error')).textContent).toBe('Error: ipc down');
+    });
+
+    it('falls back to a generic message when a dialog error carries none', async () => {
+        (await binding('OpenFolder')).mockResolvedValue({code: 'dialog_failed'});
+        render(<App/>);
+
+        fireEvent.click(screen.getByRole('button', {name: 'Open Folder'}));
+
+        expect((await screen.findByTestId('open-error')).textContent).toBe('failed to open repository');
     });
 
     it('opens the selected repository through the CTA and swaps in the main tabs', async () => {
