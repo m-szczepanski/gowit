@@ -8,9 +8,16 @@ import {MainTabs} from '@/components/MainTabs';
 import {StatusBar} from '@/components/StatusBar';
 import {SIDEBAR_PANEL_ID, useSidebarCollapse} from '@/hooks/useSidebarCollapse';
 import {useSettings} from '@/hooks/useSettings';
+import {useStatusEvents} from '@/hooks/useStatusEvents';
 import {createQueryClient} from '@/lib/queryClient';
 import {useRepoStore} from '@/stores/repo';
 import {useState} from 'react';
+
+// mounts the event bridge inside the query provider; renders nothing
+function StatusEvents() {
+    useStatusEvents();
+    return null;
+}
 
 function App() {
     const [queryClient] = useState(createQueryClient);
@@ -22,6 +29,7 @@ function App() {
 
     return (
         <QueryClientProvider client={queryClient}>
+            <StatusEvents/>
             <div className="flex h-screen flex-col font-sans">
                 <AppHeader sidebarOpen={sidebar.isOpen} onToggleSidebar={sidebar.toggle} />
                 <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
