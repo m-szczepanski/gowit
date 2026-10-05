@@ -19,6 +19,7 @@ const (
 	CodeAuthFailed     ErrorCode = "auth_failed"
 	CodeTimeout        ErrorCode = "timeout"
 	CodeCommandFailed  ErrorCode = "command_failed"
+	CodeParseFailed    ErrorCode = "parse_failed"
 )
 
 // GitError is the only error type that crosses to the app layer (ARCHITECTURE.md §4).
@@ -48,6 +49,7 @@ var (
 	ErrAuthFailed     = &GitError{Code: CodeAuthFailed}
 	ErrTimeout        = &GitError{Code: CodeTimeout}
 	ErrCommandFailed  = &GitError{Code: CodeCommandFailed}
+	ErrParseFailed    = &GitError{Code: CodeParseFailed}
 )
 
 // classify maps a failed run's combined output to a GitError. ctx completion

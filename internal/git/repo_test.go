@@ -11,7 +11,9 @@ import (
 func initRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	cmd := exec.Command("git", "init", dir)
+	// pinned branch name: tests assert branch.head, and init's default
+	// differs by git version and machine config
+	cmd := exec.Command("git", "-c", "init.defaultBranch=main", "init", dir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init failed: %v: %s", err, out)
 	}

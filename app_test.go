@@ -69,7 +69,7 @@ func TestInternalPackagesImportable(t *testing.T) {
 	_ = watcher.Watcher{}
 	_ = config.Settings{Theme: "dark"}
 	_ = config.RecentRepo{Path: "/repo", LastOpened: testTime}
-	_ = git.FileStatus{Path: "main.go", Status: "M."}
+	_ = git.FileStatus{Path: "main.go", XY: ".M"}
 	_ = git.Commit{Hash: "a1b2c3d", Subject: "initial commit"}
 }
 
