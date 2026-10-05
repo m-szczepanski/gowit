@@ -370,9 +370,8 @@ func TestOpenStartsWatcherAndSignalsStatusChanged(t *testing.T) {
 	if last.started != 1 {
 		t.Fatalf("watcher starts = %d, want 1", last.started)
 	}
-	want, _ := filepath.EvalSymlinks(dir)
-	if last.root != want && last.root != dir {
-		t.Fatalf("watch root = %q, want %q", last.root, want)
+	if want, _ := filepath.EvalSymlinks(dir); last.root != want {
+		t.Fatalf("watch root = %q, want resolved %q", last.root, want)
 	}
 
 	last.onChange()

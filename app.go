@@ -109,7 +109,8 @@ func (a *App) OpenRepository(path string) OpenRepositoryResult {
 
 // restartWatcher moves directory watching onto path, stopping whatever was
 // running before. Watching is best effort: a failed Start never invalidates
-// the open repository.
+// the open repository. onChange runs on the watcher goroutine while this
+// call may hold a.mu; the closure must never call back into locked methods.
 func (a *App) restartWatcher(path string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

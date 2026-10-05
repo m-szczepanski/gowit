@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -20,8 +21,9 @@ import (
 
 const (
 	defaultDebounce = 300 * time.Millisecond
-	// defaultMaxWatchers keeps one process well under the usual inotify
-	// instance limit (8192) with headroom for the user's other watchers.
+	// defaultMaxWatchers bounds one process on any platform: well under
+	// Linux's default inotify instance limit (8192) and cheap everywhere
+	// else (kqueue/ReadDirectoryChangesW scale with open handles).
 	defaultMaxWatchers = 1000
 	defaultPollEvery   = 2 * time.Second
 )
@@ -51,16 +53,20 @@ type Watcher struct {
 	pollEvery time.Duration
 	ctx       context.Context
 
-	fsw     *fsnotify.Watcher
-	done    chan struct{}
-	closed  chan struct{}
-	used    int
-	polling bool
+	fsw      *fsnotify.Watcher
+	done     chan struct{}
+	closed   chan struct{}
+	stopOnce sync.Once
+	used     int
+	polling  bool
 }
 
 // New prepares a watcher for the work tree at root. Nothing runs until
 // Start.
 func New(root string, onChange func(), opts Options) *Watcher {
+	if onChange == nil {
+		onChange = func() {}
+	}
 	d := opts.Debounce
 	if d <= 0 {
 		d = defaultDebounce
@@ -85,7 +91,13 @@ func New(root string, onChange func(), opts Options) *Watcher {
 
 // Start watches root recursively and delivers debounced signals until the
 // context is cancelled or Stop is called.
+// Start registers watches and begins delivery. One Watcher instance runs a
+// single Start/Stop cycle; reuse after Stop or a failed Start means a new
+// New().
 func (w *Watcher) Start(ctx context.Context) error {
+	if w.fsw != nil {
+		return errors.New("watcher: already started")
+	}
 	fsw, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -97,7 +109,10 @@ func (w *Watcher) Start(ctx context.Context) error {
 
 	addErr := w.addTree(ctx, w.root)
 	if addErr != nil && !errors.Is(addErr, errBudget) {
+		// ctx already dead: hand back a pristine watcher; Stop must not
+		// wait for a run loop that never started
 		_ = fsw.Close()
+		w.fsw, w.done, w.closed = nil, nil, nil
 		return addErr
 	}
 	w.addGitWatches()
@@ -108,28 +123,26 @@ func (w *Watcher) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop ends delivery and releases OS handles. Safe to call twice; returns
-// after the watch loop has exited.
+// Stop ends delivery and releases OS handles. Safe to call concurrently or
+// twice; returns after the watch loop has exited.
 func (w *Watcher) Stop() error {
 	if w.done == nil {
 		return nil
 	}
-	select {
-	case <-w.closed:
-		return nil
-	default:
-	}
-	close(w.done)
+	w.stopOnce.Do(func() { close(w.done) })
 	<-w.closed
 	return nil
 }
 
+// addWatch registers one path. Budget exhaustion or an OS failure leaves
+// that path unwatched; the poll fallback takes over so no gap stays dark.
 func (w *Watcher) addWatch(path string) error {
 	if w.used >= w.budget {
 		w.demote()
 		return errBudget
 	}
 	if err := w.fsw.Add(path); err != nil {
+		w.demote()
 		return err
 	}
 	w.used++
@@ -168,14 +181,17 @@ func (w *Watcher) poll() {
 // mtimes across the work tree and .git state, with git noise skipped.
 func (w *Watcher) signature() string {
 	var b strings.Builder
-	err := filepath.WalkDir(w.root, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(w.root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if w.ignoredGitNoise(path) {
-			// noise only ever appears as a directory: its parents are
-			// visited first and skipped wholesale
-			return filepath.SkipDir
+			// SkipDir from a file entry would blind the walk to its
+			// siblings, so only directories skip
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		info, err := d.Info()
 		if err != nil {
@@ -184,9 +200,6 @@ func (w *Watcher) signature() string {
 		fmt.Fprintf(&b, "%s|%d|%d\n", path, info.Size(), info.ModTime().UnixNano())
 		return nil
 	})
-	if err != nil {
-		return "walk-error"
-	}
 	return b.String()
 }
 
@@ -206,9 +219,12 @@ func (w *Watcher) addTree(ctx context.Context, root string) error {
 		if path != root && d.Name() == ".git" {
 			return filepath.SkipDir
 		}
-		if e := w.addWatch(path); e == errBudget {
-			budgetErr = errBudget
-			return filepath.SkipAll
+		if e := w.addWatch(path); e != nil {
+			if errors.Is(e, errBudget) {
+				budgetErr = errBudget
+				return filepath.SkipAll
+			}
+			// per-directory OS failure: demoted already, keep walking
 		}
 		return nil
 	})
@@ -224,6 +240,9 @@ func (w *Watcher) addTree(ctx context.Context, root string) error {
 // (objects, logs, hooks) are never registered, so their churn produces no
 // events at all.
 func (w *Watcher) addGitWatches() {
+	// linked worktrees store .git as a file pointing at a gitdir elsewhere;
+	// resolving that is future work, so those checkouts currently watch
+	// only the work tree
 	if st, err := os.Stat(w.gitDir); err != nil || !st.IsDir() {
 		return
 	}

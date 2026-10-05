@@ -2,9 +2,12 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -110,18 +113,8 @@ func TestStopHaltsDeliveryAndIsIdempotent(t *testing.T) {
 func initGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
-			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
-	}
-	run("-c", "init.defaultBranch=main", "init")
-	run("config", "core.autocrlf", "false")
+	runGitIn(t, dir, "-c", "init.defaultBranch=main", "init")
+	runGitIn(t, dir, "config", "core.autocrlf", "false")
 	return dir
 }
 
@@ -413,12 +406,10 @@ func TestStartFailsWithCancelledContext(t *testing.T) {
 		_ = w.Stop()
 		t.Fatal("want error from Start with dead ctx")
 	}
-	// second Start attempt must fail cleanly too, with budget exhausted path
-	w2 := New(dir, func() {}, Options{})
-	if err := w2.Start(context.Background()); err != nil {
-		t.Fatal(err)
+	// a Start that failed on ctx must leave Stop callable and cheap
+	if err := w.Stop(); err != nil {
+		t.Fatalf("Stop after failed Start: %v", err)
 	}
-	_ = w2.Stop()
 }
 
 func TestContextCancelStopsDelivery(t *testing.T) {
@@ -517,4 +508,136 @@ func TestClosingEventSourceEndsRunLoop(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("run loop did not exit after event source closed")
 	}
+}
+
+func TestStopIsConcurrentSafe(t *testing.T) {
+	w := New(t.TempDir(), func() {}, Options{})
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = w.Stop() }()
+	}
+	wg.Wait()
+}
+
+func TestStartTwiceRejected(t *testing.T) {
+	w := New(t.TempDir(), func() {}, Options{})
+	ctx := context.Background()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Stop() }()
+	if err := w.Start(ctx); err == nil {
+		t.Fatal("second Start on one instance must be rejected")
+	}
+}
+
+func TestAddFailureDemotesToPolling(t *testing.T) {
+	dir := t.TempDir()
+	onChange, ch := signalChan(t)
+	w := New(dir, onChange, Options{Debounce: 10 * time.Millisecond, PollEvery: 40 * time.Millisecond})
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Stop() }()
+
+	if err := w.addWatch(filepath.Join(dir, "vanished-before-add")); err == nil || errors.Is(err, errBudget) {
+		t.Fatalf("want non-budget Add failure, got %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "later.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, ch, 2*time.Second) {
+		t.Fatal("poll fallback did not take over after Add failure")
+	}
+}
+
+func TestFileNamedLikeGitNoiseDoesNotBlindSiblings(t *testing.T) {
+	dir := t.TempDir()
+	git := filepath.Join(dir, ".git")
+	if err := os.Mkdir(git, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// a stray FILE called "objects" inside .git: skipping it must not skip
+	// the rest of the .git directory in the poll signature
+	if err := os.WriteFile(filepath.Join(git, "objects"), []byte("not a dir\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(git, "zzz-later"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	onChange, ch := signalChan(t)
+	w := New(dir, onChange, Options{MaxWatchers: 1, PollEvery: 40 * time.Millisecond})
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Stop() }()
+	drainQuiet(t, ch)
+
+	if err := os.WriteFile(filepath.Join(git, "zzz-later"), []byte("b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, ch, 2*time.Second) {
+		t.Fatal("sibling after noise-named file was blinded in the signature walk")
+	}
+}
+
+func TestUnreadableDirectoryDoesNotFailStart(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "locked")
+	if err := os.Mkdir(sub, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+
+	onChange, ch := signalChan(t)
+	// an unreadable dir may fail Add (demoted to polling) or watch fine,
+	// depending on the platform backend; either way delivery must survive
+	w := New(dir, onChange, Options{Debounce: 10 * time.Millisecond, PollEvery: 40 * time.Millisecond})
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatalf("Start over unreadable dir: %v", err)
+	}
+	defer func() { _ = w.Stop() }()
+
+	if err := os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, ch, 2*time.Second) {
+		t.Fatal("no signal after surviving an unreadable directory")
+	}
+}
+
+func TestPollSignatureSurvivesUnreadableDir(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "locked")
+	if err := os.Mkdir(sub, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+
+	w := New(dir, func() {}, Options{MaxWatchers: 1, PollEvery: 40 * time.Millisecond})
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Stop() }()
+	if sig := w.signature(); !strings.Contains(sig, "ok") && sig == "" {
+		t.Fatal("signature walk aborted at the unreadable dir")
+	}
+}
+
+func TestNilOnChangeIsTolerated(t *testing.T) {
+	dir := t.TempDir()
+	w := New(dir, nil, Options{Debounce: 10 * time.Millisecond})
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Stop() }()
+	if err := os.WriteFile(filepath.Join(dir, "x.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
 }
