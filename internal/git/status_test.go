@@ -5,40 +5,32 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 func commitFile(t *testing.T, dir, name, content, msg string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{{"add", name}, {"commit", "-qm", msg}} {
-		if out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
+	writeFile(t, dir, name, content)
+	commitAll(t, dir, msg)
+}
+
+func addFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	writeFile(t, dir, name, content)
+	if _, _, err := runGit(context.Background(), dir, "add", name); err != nil {
+		t.Fatalf("git add %s: %v", name, err)
 	}
 }
 
-func commitFileOnlyAdd(t *testing.T, dir, name, content string) {
+func mustGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command("git", "-C", dir, "add", name).CombinedOutput(); err != nil {
-		t.Fatalf("git add: %v: %s", err, out)
-	}
-}
-
-func gitRun(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	args = append([]string{"-C", dir}, args...)
-	out, err := exec.Command("git", args...).CombinedOutput()
+	out, _, err := runGit(context.Background(), dir, args...)
 	if err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
+		t.Fatalf("git %v: %v", args, err)
 	}
-	return string(out)
+	return strings.TrimSpace(string(out))
 }
 
 func TestStatusCleanRepoReportsBranch(t *testing.T) {
@@ -54,13 +46,11 @@ func TestStatusCleanRepoReportsBranch(t *testing.T) {
 		t.Fatalf("Status: %v", err)
 	}
 
-	wantOid := gitRun(t, dir, "rev-parse", "HEAD")
-	wantOid = wantOid[:len(wantOid)-1]
 	if res.Branch.Head != "main" {
 		t.Fatalf("Branch.Head = %q, want main", res.Branch.Head)
 	}
-	if res.Branch.Oid != wantOid {
-		t.Fatalf("Branch.Oid = %q, want %q", res.Branch.Oid, wantOid)
+	if want := mustGit(t, dir, "rev-parse", "HEAD"); res.Branch.Oid != want {
+		t.Fatalf("Branch.Oid = %q, want %q", res.Branch.Oid, want)
 	}
 	if res.Branch.Upstream != "" || res.Branch.Ahead != 0 || res.Branch.Behind != 0 {
 		t.Fatalf("upstream fields set without upstream: %+v", res.Branch)
@@ -73,10 +63,13 @@ func TestStatusCleanRepoReportsBranch(t *testing.T) {
 func TestStatusReportsStagedAndUnstagedModifications(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "a.txt", "a\n", "add a")
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("changed\n"), 0o644); err != nil {
+	commitFile(t, dir, "c.txt", "c\n", "add c")
+	writeFile(t, dir, "a.txt", "changed\n")
+	writeFile(t, dir, "c.txt", "staged change\n")
+	if _, _, err := runGit(context.Background(), dir, "add", "c.txt"); err != nil {
 		t.Fatal(err)
 	}
-	commitFileOnlyAdd(t, dir, "b.txt", "b\n")
+	addFile(t, dir, "b.txt", "b\n")
 
 	repo, err := Open(dir)
 	if err != nil {
@@ -91,15 +84,16 @@ func TestStatusReportsStagedAndUnstagedModifications(t *testing.T) {
 	for _, f := range res.Files {
 		byPath[f.Path] = f
 	}
-	if len(byPath) != 2 {
-		t.Fatalf("files = %v, want a.txt and b.txt", res.Files)
+	if len(byPath) != 3 {
+		t.Fatalf("files = %+v, want a.txt b.txt c.txt", res.Files)
 	}
-	a := byPath["a.txt"]
-	if a.XY != ".M" || !a.Unstaged() || a.Staged() || a.Change() != ChangeModified {
+	if a := byPath["a.txt"]; a.XY != ".M" || !a.Unstaged() || a.Staged() || a.Change() != ChangeModified {
 		t.Fatalf("a.txt = %+v, want unstaged modified", a)
 	}
-	b := byPath["b.txt"]
-	if b.XY != "A." || !b.Staged() || b.Unstaged() || b.Change() != ChangeAdded {
+	if c := byPath["c.txt"]; c.XY != "M." || !c.Staged() || c.Unstaged() || c.Change() != ChangeModified {
+		t.Fatalf("c.txt = %+v, want staged modified", c)
+	}
+	if b := byPath["b.txt"]; b.XY != "A." || !b.Staged() || b.Change() != ChangeAdded {
 		t.Fatalf("b.txt = %+v, want staged added", b)
 	}
 }
@@ -107,9 +101,7 @@ func TestStatusReportsStagedAndUnstagedModifications(t *testing.T) {
 func TestStatusReportsUntrackedWithQuestionRecord(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "a.txt", "a\n", "add a")
-	if err := os.WriteFile(filepath.Join(dir, "free.txt"), []byte("x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeFile(t, dir, "free.txt", "x\n")
 
 	repo, err := Open(dir)
 	if err != nil {
@@ -134,8 +126,8 @@ func TestStatusReportsUntrackedWithQuestionRecord(t *testing.T) {
 func TestStatusReportsRenameWithOriginalPath(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "old name.txt", "content\n", "add")
-	if out, err := exec.Command("git", "-C", dir, "mv", "old name.txt", "new name.txt").CombinedOutput(); err != nil {
-		t.Fatalf("git mv: %v: %s", err, out)
+	if _, _, err := runGit(context.Background(), dir, "mv", "old name.txt", "new name.txt"); err != nil {
+		t.Fatal(err)
 	}
 
 	repo, err := Open(dir)
@@ -159,19 +151,10 @@ func TestStatusReportsRenameWithOriginalPath(t *testing.T) {
 	}
 }
 
-func TestStatusReportsUnmergedConflict(t *testing.T) {
-	dir := initRepo(t)
-	commitFile(t, dir, "conflict.txt", "base\n", "base")
-	if out, err := exec.Command("git", "-C", dir, "checkout", "-qb", "side").CombinedOutput(); err != nil {
-		t.Fatalf("checkout: %v: %s", err, out)
-	}
-	commitFile(t, dir, "conflict.txt", "side\n", "side edit")
-	if out, err := exec.Command("git", "-C", dir, "checkout", "-q", "main").CombinedOutput(); err != nil {
-		t.Fatalf("checkout: %v: %s", err, out)
-	}
-	commitFile(t, dir, "conflict.txt", "main\n", "main edit")
-	if out, err := exec.Command("git", "-C", dir, "merge", "side").CombinedOutput(); err == nil {
-		t.Fatalf("merge should conflict: %s", out)
+func TestStatusReportsUnmergedConflictWithStages(t *testing.T) {
+	dir := conflictingRepo(t)
+	if _, _, err := runGit(context.Background(), dir, "merge", "feature"); err == nil {
+		t.Fatal("merge should conflict")
 	}
 
 	repo, err := Open(dir)
@@ -187,48 +170,79 @@ func TestStatusReportsUnmergedConflict(t *testing.T) {
 		t.Fatalf("files = %+v, want one conflicted", res.Files)
 	}
 	f := res.Files[0]
-	if f.Path != "conflict.txt" || f.XY != "UU" || !f.Conflict {
-		t.Fatalf("conflict entry = %+v, want UU conflict.txt", f)
+	if f.Path != "a.txt" || f.XY != "UU" || !f.Conflict || f.Change() != ChangeConflicted {
+		t.Fatalf("conflict entry = %+v, want UU a.txt", f)
 	}
-	if f.Change() != ChangeConflicted {
-		t.Fatalf("Change = %q, want conflicted", f.Change())
+
+	// independent truth: git ls-files -u prints "<mode> <oid> <stage>\t<path>"
+	want := map[int]string{}
+	for _, line := range strings.Split(mustGit(t, dir, "ls-files", "-u"), "\n") {
+		fields := strings.Fields(strings.SplitN(line, "\t", 2)[0])
+		stage, err := strconv.Atoi(fields[2])
+		if err != nil {
+			t.Fatal(err)
+		}
+		want[stage] = fields[0] + " " + fields[1]
+	}
+	if len(f.Stages) != 3 {
+		t.Fatalf("stages = %+v, want three positions", f.Stages)
+	}
+	for _, st := range f.Stages {
+		got := st.Mode + " " + st.Oid
+		if want[st.Stage] != got {
+			t.Fatalf("stage %d = %q, want %q", st.Stage, got, want[st.Stage])
+		}
 	}
 }
 
-func initBareRemote(t *testing.T, dir string) string {
-	t.Helper()
-	remote := filepath.Join(t.TempDir(), "remote.git")
-	if out, err := exec.Command("git", "init", "--bare", "-q", remote).CombinedOutput(); err != nil {
-		t.Fatalf("git init --bare: %v: %s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", dir, "remote", "add", "origin", remote).CombinedOutput(); err != nil {
-		t.Fatalf("git remote add: %v: %s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", dir, "push", "-q", "-u", "origin", "main").CombinedOutput(); err != nil {
-		t.Fatalf("git push: %v: %s", err, out)
-	}
-	return remote
-}
-
-func TestStatusReportsUpstreamAndAheadBehind(t *testing.T) {
+func TestStatusReportsUpstreamAheadAndBehind(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "a.txt", "a\n", "add a")
-	initBareRemote(t, dir)
-	commitFile(t, dir, "b.txt", "b\n", "add b")
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	ctx := context.Background()
+	if _, _, err := runGit(ctx, dir, "-c", "init.defaultBranch=main", "init", "--bare", "-q", remote); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runGit(ctx, dir, "remote", "add", "origin", remote); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runGit(ctx, dir, "push", "-q", "-u", "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	commitFile(t, dir, "b.txt", "b\n", "local ahead")
+
+	// second clone pushes too, so the branch ends up both ahead and behind
+	other := t.TempDir()
+	if out, err := exec.Command("git", "clone", "-q", remote, other).CombinedOutput(); err != nil {
+		t.Fatalf("clone: %v: %s", err, out)
+	}
+	// repo-local identity is not cloned; CI runners have no global one
+	for _, kv := range [][2]string{{"user.email", "t@t"}, {"user.name", "test"}} {
+		if _, _, err := runGit(ctx, other, "config", kv[0], kv[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commitFile(t, other, "c.txt", "c\n", "remote ahead")
+	if _, _, err := runGit(ctx, other, "push", "-q", "origin", "HEAD:main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runGit(ctx, dir, "fetch", "-q"); err != nil {
+		t.Fatal(err)
+	}
 
 	repo, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := repo.Status(context.Background())
+	res, err := repo.Status(ctx)
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
 	if res.Branch.Upstream != "origin/main" {
 		t.Fatalf("Upstream = %q, want origin/main", res.Branch.Upstream)
 	}
-	if res.Branch.Ahead != 1 || res.Branch.Behind != 0 {
-		t.Fatalf("ahead/behind = %d/%d, want 1/0", res.Branch.Ahead, res.Branch.Behind)
+	if res.Branch.Ahead != 1 || res.Branch.Behind != 1 {
+		t.Fatalf("ahead/behind = %d/%d, want 1/1", res.Branch.Ahead, res.Branch.Behind)
 	}
 }
 
@@ -236,8 +250,8 @@ func TestStatusReportsDetachedHead(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "a.txt", "a\n", "first")
 	commitFile(t, dir, "b.txt", "b\n", "second")
-	if out, err := exec.Command("git", "-C", dir, "checkout", "-q", "--detach", "HEAD~1").CombinedOutput(); err != nil {
-		t.Fatalf("checkout: %v: %s", err, out)
+	if _, _, err := runGit(context.Background(), dir, "checkout", "-q", "--detach", "HEAD~1"); err != nil {
+		t.Fatal(err)
 	}
 
 	repo, err := Open(dir)
@@ -248,8 +262,7 @@ func TestStatusReportsDetachedHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	want := strings.TrimSpace(gitRun(t, dir, "rev-parse", "HEAD"))
-	if !res.Branch.Detached || res.Branch.Head != "" || res.Branch.Oid != want {
+	if want := mustGit(t, dir, "rev-parse", "HEAD"); !res.Branch.Detached || res.Branch.Head != "" || res.Branch.Oid != want {
 		t.Fatalf("branch = %+v, want detached at %s", res.Branch, want)
 	}
 }
@@ -257,14 +270,14 @@ func TestStatusReportsDetachedHead(t *testing.T) {
 func TestStatusReportsDeletedAndTypeChanged(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "gone.txt", "x\n", "add gone")
-	commitFile(t, dir, "exec.txt", "y\n", "add exec")
+	commitFile(t, dir, "link.txt", "y\n", "add link")
 	if err := os.Remove(filepath.Join(dir, "gone.txt")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(dir, "exec.txt")); err != nil {
+	if err := os.Remove(filepath.Join(dir, "link.txt")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("elsewhere", filepath.Join(dir, "exec.txt")); err != nil {
+	if err := os.Symlink("elsewhere", filepath.Join(dir, "link.txt")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -284,7 +297,7 @@ func TestStatusReportsDeletedAndTypeChanged(t *testing.T) {
 	if d := byPath["gone.txt"]; d.XY != ".D" || d.Change() != ChangeDeleted || !d.Unstaged() {
 		t.Fatalf("deleted = %+v, want unstaged .D", d)
 	}
-	if tc := byPath["exec.txt"]; tc.XY != ".T" || tc.Change() != ChangeTypeChanged {
+	if tc := byPath["link.txt"]; tc.XY != ".T" || tc.Change() != ChangeTypeChanged {
 		t.Fatalf("typechange = %+v, want .T", tc)
 	}
 }

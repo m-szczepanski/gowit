@@ -10,6 +10,15 @@ type FileStatus struct {
 	Untracked bool
 	Ignored   bool
 	Conflict  bool
+	Stages    []MergeStage // for conflicted entries: positions 1=base, 2=ours, 3=theirs; zero oid/mode means the side is absent
+}
+
+// MergeStage is one index stage of a conflicted path, positional in the
+// porcelain v2 unmerged record (stage 1 base, 2 ours, 3 theirs).
+type MergeStage struct {
+	Stage int
+	Mode  string
+	Oid   string
 }
 
 // Change is a human-readable classification of an entry derived from its
@@ -26,6 +35,7 @@ const (
 	ChangeConflicted  Change = "conflicted"
 	ChangeUntracked   Change = "untracked"
 	ChangeIgnored     Change = "ignored"
+	ChangeUnknown     Change = "unknown"
 )
 
 // Change classifies the entry: the staged code wins over the worktree one,
@@ -55,8 +65,10 @@ func (f FileStatus) Change() Change {
 		return ChangeCopied
 	case 'T':
 		return ChangeTypeChanged
-	default:
+	case 'M':
 		return ChangeModified
+	default:
+		return ChangeUnknown
 	}
 }
 

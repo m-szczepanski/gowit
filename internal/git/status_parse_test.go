@@ -87,6 +87,13 @@ func TestParseStatusV2SubmoduleAndCopyRecords(t *testing.T) {
 	}
 }
 
+func TestParseStatusV2UnknownChangeLetter(t *testing.T) {
+	f := FileStatus{XY: "Z."}
+	if f.Change() != ChangeUnknown {
+		t.Fatalf("Change() = %q, want unknown", f.Change())
+	}
+}
+
 func TestParseStatusV2RejectsMalformedRecords(t *testing.T) {
 	cases := map[string][]byte{
 		"unknown record type":     joinZ("# branch.head main", "3 weird record"),

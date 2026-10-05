@@ -72,6 +72,11 @@ func parseStatusV2(out []byte) (*StatusResult, error) {
 				Submodule: parts[2],
 				Path:      parts[10],
 				Conflict:  true,
+				Stages: []MergeStage{
+					newStage(1, parts[3], parts[7]),
+					newStage(2, parts[4], parts[8]),
+					newStage(3, parts[5], parts[9]),
+				},
 			})
 		default:
 			return nil, parseError(seg)
@@ -118,11 +123,15 @@ func parseStatusHeader(res *StatusResult, line string) error {
 func parseCount(s string) (int, error) {
 	v, err := strconv.Atoi(strings.TrimLeft(s, "+-"))
 	if err != nil {
-		return 0, fmt.Errorf("git status: malformed branch.ab count %q", s)
+		return 0, &GitError{Code: CodeParseFailed, Message: fmt.Sprintf("malformed branch.ab count %q", s)}
 	}
 	return v, nil
 }
 
-func parseError(line string) error {
-	return fmt.Errorf("git status: malformed porcelain v2 line %q", line)
+func newStage(num int, mode, oid string) MergeStage {
+	return MergeStage{Stage: num, Mode: mode, Oid: oid}
+}
+
+func parseError(seg string) error {
+	return &GitError{Code: CodeParseFailed, Message: "malformed porcelain v2 record: " + seg}
 }
