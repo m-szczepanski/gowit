@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -436,5 +437,146 @@ func TestNewAppDefaultWatchSeamConstructsWatcher(t *testing.T) {
 	}
 	if err := w.Stop(); err != nil {
 		t.Fatalf("Stop before Start: %v", err)
+	}
+}
+
+func TestGetStatusRequiresOpenRepo(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	res := app.GetStatus()
+	if res.Code != "no_repo" || res.Message == "" {
+		t.Fatalf("GetStatus closed = %+v, want no_repo code", res)
+	}
+	if res.Files != nil {
+		t.Fatalf("files = %v, want nil", res.Files)
+	}
+}
+
+func TestGetStatusReturnsParsedState(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	dir := initRepoWithCommit(t)
+	if res := app.OpenRepository(dir); res.Code != "" {
+		t.Fatalf("open: %+v", res)
+	}
+	writeFileForAppTest(t, dir, "a.txt", "edited\n")
+
+	res := app.GetStatus()
+	if res.Code != "" {
+		t.Fatalf("GetStatus: %+v", res)
+	}
+	wantOid := gitRunIn(t, dir, "rev-parse", "HEAD")
+	if res.Branch.Oid != wantOid || res.Branch.Head == "" {
+		t.Fatalf("branch = %+v, want at %s", res.Branch, wantOid)
+	}
+	if len(res.Files) != 1 {
+		t.Fatalf("files = %+v, want one", res.Files)
+	}
+	f := res.Files[0]
+	if f.Path != "a.txt" || f.XY != ".M" || !f.Unstaged || f.Staged || f.Change != git.ChangeModified {
+		t.Fatalf("file = %+v, want unstaged modified a.txt", f)
+	}
+}
+
+func TestStageAndUnstageAdapters(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	dir := initRepoWithCommit(t)
+	app.OpenRepository(dir)
+	writeFileForAppTest(t, dir, "a.txt", "edited\n")
+
+	if res := app.StageFiles([]string{"a.txt"}); res.Code != "" {
+		t.Fatalf("StageFiles: %+v", res)
+	}
+	f := app.GetStatus().Files[0]
+	if !f.Staged || f.Unstaged || f.Change != git.ChangeModified {
+		t.Fatalf("after stage: %+v", f)
+	}
+
+	if res := app.UnstageFiles([]string{"a.txt"}); res.Code != "" {
+		t.Fatalf("UnstageFiles: %+v", res)
+	}
+	if f := app.GetStatus().Files[0]; f.Staged || !f.Unstaged {
+		t.Fatalf("after unstage: %+v", f)
+	}
+
+	writeFileForAppTest(t, dir, "a.txt", "edited\n")
+	if res := app.StageAll(); res.Code != "" {
+		t.Fatalf("StageAll: %+v", res)
+	}
+	if f := app.GetStatus().Files[0]; !f.Staged {
+		t.Fatalf("after StageAll: %+v", f)
+	}
+	if res := app.UnstageAll(); res.Code != "" {
+		t.Fatalf("UnstageAll: %+v", res)
+	}
+	if f := app.GetStatus().Files[0]; f.Staged {
+		t.Fatalf("after UnstageAll: %+v", f)
+	}
+}
+
+func TestStagingAdaptersSurfaceGitAndRepoErrors(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	if res := app.StageFiles([]string{"a.txt"}); res.Code != "no_repo" {
+		t.Fatalf("closed StageFiles: %+v", res)
+	}
+	if res := app.UnstageAll(); res.Code != "no_repo" {
+		t.Fatalf("closed UnstageAll: %+v", res)
+	}
+
+	dir := initRepoWithCommit(t)
+	app.OpenRepository(dir)
+	res := app.StageFiles([]string{"nosuch.txt"})
+	if res.Code != string(git.CodeCommandFailed) || !strings.Contains(res.Message, "nosuch.txt") {
+		t.Fatalf("bad path StageFiles = %+v, want command_failed naming the path", res)
+	}
+	if res := app.StageFiles([]string{}); res.Code == "" {
+		t.Fatalf("empty paths = %+v, want guard error", res)
+	}
+}
+
+func initRepoWithCommit(t *testing.T) string {
+	t.Helper()
+	dir := initRepoForAppTest(t)
+	writeFileForAppTest(t, dir, "a.txt", "base\n")
+	if out, err := exec.Command("git", "-C", dir, "add", "a.txt").CombinedOutput(); err != nil {
+		t.Fatalf("add: %v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base").CombinedOutput(); err != nil {
+		t.Fatalf("commit: %v: %s", err, out)
+	}
+	return dir
+}
+
+func writeFileForAppTest(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func gitRunIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestGetStatusAfterRepoVanished(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	dir := initRepoWithCommit(t)
+	app.OpenRepository(dir)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	res := app.GetStatus()
+	if res.Code != string(git.CodeCommandFailed) {
+		t.Fatalf("GetStatus vanished = %+v, want command_failed", res)
+	}
+}
+
+func TestCallResultFallsBackForNonGitErrors(t *testing.T) {
+	res := callResult(errors.New("boom"))
+	if res.Code != openFailedCode || res.Message != "boom" {
+		t.Fatalf("callResult = %+v, want open_failed passthrough", res)
 	}
 }

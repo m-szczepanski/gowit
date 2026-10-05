@@ -2,23 +2,29 @@ package git
 
 // FileStatus is one working-tree entry, parsed from
 // `git status --porcelain=v2`. XY holds git's index+worktree code pair.
+// Staged, Unstaged and Change are derived by classify during parsing so
+// the serialized payload carries the full picture: the frontend must never
+// re-derive git's XY grammar.
 type FileStatus struct {
-	XY        string
-	Path      string
-	OrigPath  string // rename/copy source, empty otherwise
-	Submodule string // submodule state field (N..., M..., C...); empty for untracked/ignored
-	Untracked bool
-	Ignored   bool
-	Conflict  bool
-	Stages    []MergeStage // for conflicted entries: positions 1=base, 2=ours, 3=theirs; zero oid/mode means the side is absent
+	XY        string       `json:"xy"`
+	Path      string       `json:"path"`
+	OrigPath  string       `json:"origPath,omitempty"`
+	Submodule string       `json:"submodule,omitempty"`
+	Untracked bool         `json:"untracked"`
+	Ignored   bool         `json:"ignored"`
+	Conflict  bool         `json:"conflict"`
+	Staged    bool         `json:"staged"`
+	Unstaged  bool         `json:"unstaged"`
+	Change    Change       `json:"change"`
+	Stages    []MergeStage `json:"stages,omitempty"`
 }
 
 // MergeStage is one index stage of a conflicted path, positional in the
 // porcelain v2 unmerged record (stage 1 base, 2 ours, 3 theirs).
 type MergeStage struct {
-	Stage int
-	Mode  string
-	Oid   string
+	Stage int    `json:"stage"`
+	Mode  string `json:"mode"`
+	Oid   string `json:"oid"`
 }
 
 // Change is a human-readable classification of an entry derived from its
@@ -38,9 +44,17 @@ const (
 	ChangeUnknown     Change = "unknown"
 )
 
-// Change classifies the entry: the staged code wins over the worktree one,
+// classifyFile fills the derived fields (Staged, Unstaged, Change) from the
+// record data. The staged code wins over the worktree one for Change,
 // mirroring how the staging view groups files.
-func (f FileStatus) Change() Change {
+func classifyFile(f FileStatus) FileStatus {
+	f.Staged = !f.Untracked && !f.Ignored && f.XY[0] != '.'
+	f.Unstaged = !f.Untracked && !f.Ignored && f.XY[1] != '.'
+	f.Change = changeOf(f)
+	return f
+}
+
+func changeOf(f FileStatus) Change {
 	if f.Conflict {
 		return ChangeConflicted
 	}
@@ -72,26 +86,20 @@ func (f FileStatus) Change() Change {
 	}
 }
 
-// Staged reports a difference between HEAD and the index.
-func (f FileStatus) Staged() bool { return !f.Untracked && !f.Ignored && f.XY[0] != '.' }
-
-// Unstaged reports a difference between the index and the work tree.
-func (f FileStatus) Unstaged() bool { return !f.Untracked && !f.Ignored && f.XY[1] != '.' }
-
 // BranchStatus is the `# branch.*` header block of git status.
 type BranchStatus struct {
-	Head     string // branch name; empty when detached
-	Oid      string
-	Detached bool
-	Upstream string // remote tracking ref, empty without one
-	Ahead    int
-	Behind   int
+	Head     string `json:"head"` // branch name; empty when detached
+	Oid      string `json:"oid"`
+	Detached bool   `json:"detached"`
+	Upstream string `json:"upstream,omitempty"`
+	Ahead    int    `json:"ahead"`
+	Behind   int    `json:"behind"`
 }
 
 // StatusResult is the full parse of `git status --porcelain=v2 --branch -z`.
 type StatusResult struct {
-	Branch BranchStatus
-	Files  []FileStatus
+	Branch BranchStatus `json:"branch"`
+	Files  []FileStatus `json:"files"`
 }
 
 // Commit is one entry from `git log --format=...` (issue #15).

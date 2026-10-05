@@ -84,13 +84,13 @@ func TestStatusReportsStagedAndUnstagedModifications(t *testing.T) {
 	if len(byPath) != 3 {
 		t.Fatalf("files = %+v, want a.txt b.txt c.txt", res.Files)
 	}
-	if a := byPath["a.txt"]; a.XY != ".M" || !a.Unstaged() || a.Staged() || a.Change() != ChangeModified {
+	if a := byPath["a.txt"]; a.XY != ".M" || !a.Unstaged || a.Staged || a.Change != ChangeModified {
 		t.Fatalf("a.txt = %+v, want unstaged modified", a)
 	}
-	if c := byPath["c.txt"]; c.XY != "M." || !c.Staged() || c.Unstaged() || c.Change() != ChangeModified {
+	if c := byPath["c.txt"]; c.XY != "M." || !c.Staged || c.Unstaged || c.Change != ChangeModified {
 		t.Fatalf("c.txt = %+v, want staged modified", c)
 	}
-	if b := byPath["b.txt"]; b.XY != "A." || !b.Staged() || b.Change() != ChangeAdded {
+	if b := byPath["b.txt"]; b.XY != "A." || !b.Staged || b.Change != ChangeAdded {
 		t.Fatalf("b.txt = %+v, want staged added", b)
 	}
 }
@@ -111,7 +111,7 @@ func TestStatusReportsUntrackedWithQuestionRecord(t *testing.T) {
 
 	for _, f := range res.Files {
 		if f.Path == "free.txt" {
-			if !f.Untracked || f.Staged() || f.Unstaged() || f.Change() != ChangeUntracked {
+			if !f.Untracked || f.Staged || f.Unstaged || f.Change != ChangeUntracked {
 				t.Fatalf("free.txt = %+v, want untracked", f)
 			}
 			return
@@ -143,7 +143,7 @@ func TestStatusReportsRenameWithOriginalPath(t *testing.T) {
 	if f.Path != "new name.txt" || f.OrigPath != "old name.txt" {
 		t.Fatalf("paths = %q <- %q, want new name.txt <- old name.txt", f.Path, f.OrigPath)
 	}
-	if f.XY != "R." || f.Change() != ChangeRenamed || !f.Staged() {
+	if f.XY != "R." || f.Change != ChangeRenamed || !f.Staged {
 		t.Fatalf("rename = %+v, want staged R.", f)
 	}
 }
@@ -167,7 +167,7 @@ func TestStatusReportsUnmergedConflictWithStages(t *testing.T) {
 		t.Fatalf("files = %+v, want one conflicted", res.Files)
 	}
 	f := res.Files[0]
-	if f.Path != "a.txt" || f.XY != "UU" || !f.Conflict || f.Change() != ChangeConflicted {
+	if f.Path != "a.txt" || f.XY != "UU" || !f.Conflict || f.Change != ChangeConflicted {
 		t.Fatalf("conflict entry = %+v, want UU a.txt", f)
 	}
 
@@ -281,7 +281,7 @@ func TestStatusReportsDeleted(t *testing.T) {
 	}
 
 	byPath := statusByPath(res)
-	if d := byPath["gone.txt"]; d.XY != ".D" || d.Change() != ChangeDeleted || !d.Unstaged() {
+	if d := byPath["gone.txt"]; d.XY != ".D" || d.Change != ChangeDeleted || !d.Unstaged {
 		t.Fatalf("deleted = %+v, want unstaged .D", d)
 	}
 }
@@ -312,7 +312,7 @@ func TestStatusReportsTypeChanged(t *testing.T) {
 
 	for _, f := range res.Files {
 		if f.Path == "link.txt" {
-			if f.XY != ".T" || f.Change() != ChangeTypeChanged {
+			if f.XY != ".T" || f.Change != ChangeTypeChanged {
 				t.Fatalf("typechange = %+v, want .T", f)
 			}
 			return

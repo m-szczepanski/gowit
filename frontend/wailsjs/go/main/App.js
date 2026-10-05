@@ -14,6 +14,10 @@ export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }
 
+export function GetStatus() {
+  return window['go']['main']['App']['GetStatus']();
+}
+
 export function OpenFolder() {
   return window['go']['main']['App']['OpenFolder']();
 }
@@ -24,4 +28,20 @@ export function OpenRepository(arg1) {
 
 export function SetSettings(arg1) {
   return window['go']['main']['App']['SetSettings'](arg1);
+}
+
+export function StageAll() {
+  return window['go']['main']['App']['StageAll']();
+}
+
+export function StageFiles(arg1) {
+  return window['go']['main']['App']['StageFiles'](arg1);
+}
+
+export function UnstageAll() {
+  return window['go']['main']['App']['UnstageAll']();
+}
+
+export function UnstageFiles(arg1) {
+  return window['go']['main']['App']['UnstageFiles'](arg1);
 }

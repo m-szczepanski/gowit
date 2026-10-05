@@ -21,3 +21,19 @@ Element.prototype.setPointerCapture = () => {
 };
 Element.prototype.releasePointerCapture = () => {
 };
+
+// The generated Wails runtime bridge expects window.runtime, and its
+// EventsOn delegates to EventsOnMultiple; this stand-in keeps jsdom tests
+// rendering. configurable lets event-specific tests replace it wholesale.
+Object.defineProperty(window, 'runtime', {
+    writable: true,
+    configurable: true,
+    value: {
+        EventsOn: () => () => {
+        },
+        EventsOnMultiple: () => () => {
+        },
+        EventsOff: () => {
+        }
+    }
+});
