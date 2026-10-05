@@ -78,6 +78,29 @@ func TestOpenParentOfRepositoriesSuggestsChildren(t *testing.T) {
 	}
 }
 
+func TestOpenParentOfSingleRepositoryUsesSingularGrammar(t *testing.T) {
+	parent := t.TempDir()
+	solo := filepath.Join(parent, "solo")
+	if err := os.Mkdir(solo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "init", solo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+
+	_, err := Open(parent)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "solo") || !strings.Contains(msg, "is - open it") {
+		t.Fatalf("singular hint expected, got %q", msg)
+	}
+	if strings.Contains(msg, "are -") {
+		t.Fatalf("plural grammar used for a single child: %q", msg)
+	}
+}
+
 func TestOpenPlainDirectoryDoesNotClaimChildren(t *testing.T) {
 	_, err := Open(t.TempDir())
 	if !errors.Is(err, ErrNotARepository) {

@@ -11,6 +11,6 @@ export function GetSettings():Promise<config.Settings>;
 
 export function OpenFolder():Promise<main.FolderDialogResult>;
 
-export function OpenRepository(arg1:string):Promise<main.CallResult>;
+export function OpenRepository(arg1:string):Promise<main.OpenRepositoryResult>;
 
 export function SetSettings(arg1:config.Settings):Promise<main.CallResult>;

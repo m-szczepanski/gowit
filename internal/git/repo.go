@@ -55,10 +55,17 @@ func Open(path string) (*Repo, error) {
 	gitErr := classify(ctx, string(stderr)+"\n"+string(out), exitCodeOf(err))
 	if gitErr.Code == CodeNotARepository {
 		if children := childRepos(abs); len(children) > 0 {
-			gitErr.Message = fmt.Sprintf("%q is not a repository, but %s are - open one of them", abs, strings.Join(children, ", "))
+			gitErr.Message = childReposHint(abs, children)
 		}
 	}
 	return nil, gitErr
+}
+
+func childReposHint(abs string, children []string) string {
+	if len(children) == 1 {
+		return fmt.Sprintf("%q is not a repository, but %s is - open it", abs, children[0])
+	}
+	return fmt.Sprintf("%q is not a repository, but %s are - open one of them", abs, strings.Join(children, ", "))
 }
 
 func childRepos(dir string) []string {

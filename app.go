@@ -52,6 +52,14 @@ type FolderDialogResult struct {
 	Path string `json:"path"`
 }
 
+// OpenRepositoryResult also carries Path: the resolved work-tree root,
+// which differs from the requested path for subdirectories or symlinked
+// temp locations - the frontend must key its state on this value.
+type OpenRepositoryResult struct {
+	CallResult
+	Path string `json:"path"`
+}
+
 const (
 	saveFailedCode = "save_failed"
 	openFailedCode = "open_failed"
@@ -59,24 +67,29 @@ const (
 
 // OpenRepository validates the path with git, binds it as the current repo,
 // records it in recents and announces repo:opened. Code carries the git
-// failure (not_a_repository, bare_repository, path_missing...) for the UI.
-func (a *App) OpenRepository(path string) CallResult {
+// failure (not_a_repository, bare_repository, path_missing...) for the UI;
+// Path on success is the resolved work-tree root.
+func (a *App) OpenRepository(path string) OpenRepositoryResult {
 	repo, err := a.open(path)
 	if err != nil {
 		var gitErr *git.GitError
 		if errors.As(err, &gitErr) {
-			return CallResult{Code: string(gitErr.Code), Message: gitErr.Message}
+			return OpenRepositoryResult{CallResult: CallResult{Code: string(gitErr.Code), Message: gitErr.Message}}
 		}
-		return CallResult{Code: openFailedCode, Message: err.Error()}
+		return OpenRepositoryResult{CallResult: CallResult{Code: openFailedCode, Message: err.Error()}}
 	}
 
 	a.mu.Lock()
+	previous := a.repo
 	a.repo = repo
 	a.mu.Unlock()
+	if previous != nil {
+		_ = previous.Close()
+	}
 	// recents are best effort: a failed settings write must not undo an open
 	_ = a.cfg.AddRecent(repo.Path())
 	a.emit(a.ctx, "repo:opened", repo.Path())
-	return CallResult{}
+	return OpenRepositoryResult{Path: repo.Path()}
 }
 
 // GetSettings returns the persisted user settings (defaults when absent).

@@ -196,6 +196,9 @@ func TestOpenRepositoryBindsEmitsAndRecords(t *testing.T) {
 	if res.Code != "" {
 		t.Fatalf("OpenRepository = %+v", res)
 	}
+	if res.Path != toplevel {
+		t.Fatalf("res.Path = %q, want resolved %q", res.Path, toplevel)
+	}
 	if app.repo == nil || app.repo.Path() != toplevel {
 		t.Fatalf("repo = %v, want bound to %s", app.repo, toplevel)
 	}
@@ -224,6 +227,26 @@ func TestOpenRepositoryReportsGitValidationCodes(t *testing.T) {
 	}
 	if len(app.GetRecentRepos()) != 0 {
 		t.Fatal("failed open must not touch recents")
+	}
+}
+
+func TestOpenRepositoryReplacesPreviousRepo(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	first := initRepoForAppTest(t)
+	second := initRepoForAppTest(t)
+
+	app.OpenRepository(first)
+	res := app.OpenRepository(second)
+
+	want, err := filepath.EvalSymlinks(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Code != "" || app.repo == nil || app.repo.Path() != want {
+		t.Fatalf("second open = %+v, repo = %v, want bound to %s", res, app.repo, want)
+	}
+	if recents := app.GetRecentRepos(); len(recents) != 2 || recents[0].Path != want {
+		t.Fatalf("recents = %v, want both opens with newest first", recents)
 	}
 }
 
