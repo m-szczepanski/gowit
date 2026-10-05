@@ -98,8 +98,8 @@ type BranchStatus struct {
 
 // StatusResult is the full parse of `git status --porcelain=v2 --branch -z`.
 type StatusResult struct {
-	Branch BranchStatus `json:"branch"`
-	Files  []FileStatus `json:"files"`
+	Branch BranchStatus
+	Files  []FileStatus
 }
 
 // Commit is one entry from `git log --format=...` (issue #15).

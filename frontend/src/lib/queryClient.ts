@@ -15,9 +15,10 @@ import {QueryClient} from '@tanstack/react-query';
  *    factory from lib/queryKeys (e.g. queryKeys.status(repoPath)).
  * 2. Repo/file changes detected by the watcher: Wails events are bridged to
  *    invalidations via lib/wailsEvents, never polled by components.
- * 3. After any mutating Go call (commit, stage, checkout): invalidate on
- *    success in the mutation's own module, scoped to the smallest key that
- *    changed (status and log, not the whole cache).
+ * 3. After any mutating Go call (commit, stage, checkout): the mutation's
+ *    own module replaces the affected key with the fresh result the backend
+ *    echoes back, and invalidates only when the call failed or an echo is
+ *    unavailable - never the whole cache.
  */
 export function createQueryClient() {
     return new QueryClient({
