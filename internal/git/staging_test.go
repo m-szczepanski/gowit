@@ -86,7 +86,7 @@ func TestUnstageKeepsWorktreeChanges(t *testing.T) {
 	}
 
 	m := statusByPath(openStatus(t, dir))
-	if f := m["a.txt"]; f.XY != ".M" || f.Staged() {
+	if f := m["a.txt"]; f.XY != ".M" || f.Staged {
 		t.Fatalf("a.txt = %+v, want unstaged modified", f)
 	}
 	if f := m["new.txt"]; !f.Untracked {
@@ -140,7 +140,7 @@ func TestStageAllAndUnstageAll(t *testing.T) {
 	}
 
 	m := statusByPath(openStatus(t, dir))
-	if m["a.txt"].XY != "M." || !m["new.txt"].Staged() || m["gone.txt"].XY != "D." {
+	if m["a.txt"].XY != "M." || !m["new.txt"].Staged || m["gone.txt"].XY != "D." {
 		t.Fatalf("after StageAll = %+v", m)
 	}
 
@@ -149,7 +149,7 @@ func TestStageAllAndUnstageAll(t *testing.T) {
 	}
 	m = statusByPath(openStatus(t, dir))
 	for _, f := range m {
-		if f.Staged() {
+		if f.Staged {
 			t.Fatalf("%s still staged after UnstageAll: %+v", f.Path, f)
 		}
 	}

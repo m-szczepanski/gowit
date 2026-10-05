@@ -58,10 +58,10 @@ func TestParseStatusV2IgnoredRecord(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	f := res.Files[0]
-	if f.Path != "some/ignored.txt" || !f.Ignored || f.Change() != ChangeIgnored {
+	if f.Path != "some/ignored.txt" || !f.Ignored || f.Change != ChangeIgnored {
 		t.Fatalf("ignored = %+v", f)
 	}
-	if f.Staged() || f.Unstaged() {
+	if f.Staged || f.Unstaged {
 		t.Fatalf("ignored entry classified as change: %+v", f)
 	}
 }
@@ -79,19 +79,19 @@ func TestParseStatusV2SubmoduleAndCopyRecords(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	sub := res.Files[0]
-	if sub.Path != "submodule-dir" || sub.Submodule != "M..." || sub.XY != "M." || sub.Change() != ChangeModified {
+	if sub.Path != "submodule-dir" || sub.Submodule != "M..." || sub.XY != "M." || sub.Change != ChangeModified {
 		t.Fatalf("submodule entry = %+v", sub)
 	}
 	cp := res.Files[1]
-	if cp.Path != "copy.txt" || cp.OrigPath != "source.txt" || cp.XY != "C." || cp.Change() != ChangeCopied {
+	if cp.Path != "copy.txt" || cp.OrigPath != "source.txt" || cp.XY != "C." || cp.Change != ChangeCopied {
 		t.Fatalf("copy entry = %+v", cp)
 	}
 }
 
 func TestParseStatusV2UnknownChangeLetter(t *testing.T) {
-	f := FileStatus{XY: "Z."}
-	if f.Change() != ChangeUnknown {
-		t.Fatalf("Change() = %q, want unknown", f.Change())
+	f := classifyFile(FileStatus{XY: "Z."})
+	if f.Change != ChangeUnknown {
+		t.Fatalf("Change() = %q, want unknown", f.Change)
 	}
 }
 

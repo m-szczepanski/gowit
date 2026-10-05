@@ -9,8 +9,18 @@ export function GetRecentRepos():Promise<Array<config.RecentRepo>>;
 
 export function GetSettings():Promise<config.Settings>;
 
+export function GetStatus():Promise<main.StatusResponse>;
+
 export function OpenFolder():Promise<main.FolderDialogResult>;
 
 export function OpenRepository(arg1:string):Promise<main.OpenRepositoryResult>;
 
 export function SetSettings(arg1:config.Settings):Promise<main.CallResult>;
+
+export function StageAll():Promise<main.StatusResponse>;
+
+export function StageFiles(arg1:Array<string>):Promise<main.StatusResponse>;
+
+export function UnstageAll():Promise<main.StatusResponse>;
+
+export function UnstageFiles(arg1:Array<string>):Promise<main.StatusResponse>;

@@ -39,11 +39,11 @@ func parseStatusV2(out []byte) (*StatusResult, error) {
 			if len(parts) != 9 {
 				return nil, parseError(seg)
 			}
-			res.Files = append(res.Files, FileStatus{
+			res.Files = append(res.Files, classifyFile(FileStatus{
 				XY:        parts[1],
 				Submodule: parts[2],
 				Path:      parts[8],
-			})
+			}))
 		case strings.HasPrefix(seg, "2 "):
 			// rename/copy: the segment following the record is the original
 			// path, consumed here so it is not parsed as its own record
@@ -52,22 +52,22 @@ func parseStatusV2(out []byte) (*StatusResult, error) {
 				return nil, parseError(seg)
 			}
 			i++
-			res.Files = append(res.Files, FileStatus{
+			res.Files = append(res.Files, classifyFile(FileStatus{
 				XY:        parts[1],
 				Submodule: parts[2],
 				Path:      parts[9],
 				OrigPath:  segs[i],
-			})
+			}))
 		case strings.HasPrefix(seg, "? "):
-			res.Files = append(res.Files, FileStatus{XY: "??", Untracked: true, Path: seg[2:]})
+			res.Files = append(res.Files, classifyFile(FileStatus{XY: "??", Untracked: true, Path: seg[2:]}))
 		case strings.HasPrefix(seg, "! "):
-			res.Files = append(res.Files, FileStatus{XY: "!!", Ignored: true, Path: seg[2:]})
+			res.Files = append(res.Files, classifyFile(FileStatus{XY: "!!", Ignored: true, Path: seg[2:]}))
 		case strings.HasPrefix(seg, "u "):
 			parts := strings.SplitN(seg, " ", 11)
 			if len(parts) != 11 {
 				return nil, parseError(seg)
 			}
-			res.Files = append(res.Files, FileStatus{
+			res.Files = append(res.Files, classifyFile(FileStatus{
 				XY:        parts[1],
 				Submodule: parts[2],
 				Path:      parts[10],
@@ -77,7 +77,7 @@ func parseStatusV2(out []byte) (*StatusResult, error) {
 					newStage(2, parts[4], parts[8]),
 					newStage(3, parts[5], parts[9]),
 				},
-			})
+			}))
 		default:
 			return nil, parseError(seg)
 		}

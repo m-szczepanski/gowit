@@ -77,7 +77,76 @@ type OpenRepositoryResult struct {
 const (
 	saveFailedCode = "save_failed"
 	openFailedCode = "open_failed"
+	noRepoCode     = "no_repo"
 )
+
+// StatusResponse is the status read model for the frontend: branch plus
+// classified files, with the typed error envelope.
+type StatusResponse struct {
+	CallResult
+	Branch git.BranchStatus `json:"branch"`
+	Files  []git.FileStatus `json:"files"`
+}
+
+// GetStatus returns the parsed working-dir state of the open repository.
+// Mutations return the same shape fresh from git, so the UI can replace
+// its cache instead of guessing index transitions.
+func (a *App) GetStatus() StatusResponse {
+	repo := a.currentRepo()
+	if repo == nil {
+		return StatusResponse{CallResult: CallResult{Code: noRepoCode, Message: "no repository open"}}
+	}
+	res, err := repo.Status(a.ctx)
+	if err != nil {
+		return StatusResponse{CallResult: callResult(err)}
+	}
+	return StatusResponse{Branch: res.Branch, Files: res.Files}
+}
+
+// StageFiles adds the given paths to the index.
+func (a *App) StageFiles(paths []string) StatusResponse {
+	return a.mutate(func(repo *git.Repo) error { return repo.Stage(a.ctx, paths...) })
+}
+
+// UnstageFiles resets the index for the given paths, work tree untouched.
+func (a *App) UnstageFiles(paths []string) StatusResponse {
+	return a.mutate(func(repo *git.Repo) error { return repo.Unstage(a.ctx, paths...) })
+}
+
+// StageAll stages every modification, addition and deletion.
+func (a *App) StageAll() StatusResponse {
+	return a.mutate(func(repo *git.Repo) error { return repo.StageAll(a.ctx) })
+}
+
+// UnstageAll resets the whole index back to HEAD.
+func (a *App) UnstageAll() StatusResponse {
+	return a.mutate(func(repo *git.Repo) error { return repo.UnstageAll(a.ctx) })
+}
+
+func (a *App) mutate(op func(*git.Repo) error) StatusResponse {
+	repo := a.currentRepo()
+	if repo == nil {
+		return StatusResponse{CallResult: CallResult{Code: noRepoCode, Message: "no repository open"}}
+	}
+	if err := op(repo); err != nil {
+		return StatusResponse{CallResult: callResult(err)}
+	}
+	return a.GetStatus()
+}
+
+func (a *App) currentRepo() *git.Repo {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.repo
+}
+
+func callResult(err error) CallResult {
+	var gitErr *git.GitError
+	if errors.As(err, &gitErr) {
+		return CallResult{Code: string(gitErr.Code), Message: gitErr.Message}
+	}
+	return CallResult{Code: openFailedCode, Message: err.Error()}
+}
 
 // OpenRepository validates the path with git, binds it as the current repo,
 // records it in recents and announces repo:opened. Code carries the git
