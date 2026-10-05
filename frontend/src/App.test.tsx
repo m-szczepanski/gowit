@@ -112,7 +112,7 @@ describe('App shell', () => {
     });
 
     it('shows the backend validation hint when the picked folder is not a repo', async () => {
-        const hint = '"/srv/code" is not a repository, but /srv/code/gowit are - open one of them';
+        const hint = '/srv/code is not a repository, but /srv/code/gowit are - open one of them';
         (await binding('OpenFolder')).mockResolvedValue({path: '/srv/code'});
         (await binding('OpenRepository')).mockResolvedValue({code: 'not_a_repository', message: hint});
         render(<App/>);

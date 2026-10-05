@@ -29,7 +29,7 @@ func Open(path string) (*Repo, error) {
 	if _, err := os.Stat(abs); err != nil {
 		return nil, &GitError{
 			Code:     CodePathMissing,
-			Message:  fmt.Sprintf("%q does not exist", abs),
+			Message:  fmt.Sprintf("%s does not exist", abs),
 			ExitCode: -1,
 		}
 	}
@@ -40,14 +40,16 @@ func Open(path string) (*Repo, error) {
 	ctx := context.Background()
 	out, stderr, err := runGit(ctx, abs, "rev-parse", "--show-toplevel")
 	if err == nil {
-		return &Repo{path: strings.TrimSpace(string(out))}, nil
+		// git always prints forward slashes; Clean canonicalizes to the
+		// native separator so Repo paths match Go paths and recents dedupe
+		return &Repo{path: filepath.Clean(strings.TrimSpace(string(out)))}, nil
 	}
 
 	if bare, _, bareErr := runGit(ctx, abs, "rev-parse", "--is-bare-repository"); bareErr == nil &&
 		strings.TrimSpace(string(bare)) == "true" {
 		return nil, &GitError{
 			Code:     CodeBareRepository,
-			Message:  fmt.Sprintf("%q is a bare repository with no working tree; clone it first", abs),
+			Message:  fmt.Sprintf("%s is a bare repository with no working tree; clone it first", abs),
 			ExitCode: exitCodeOf(err),
 		}
 	}
@@ -63,9 +65,9 @@ func Open(path string) (*Repo, error) {
 
 func childReposHint(abs string, children []string) string {
 	if len(children) == 1 {
-		return fmt.Sprintf("%q is not a repository, but %s is - open it", abs, children[0])
+		return fmt.Sprintf("%s is not a repository, but %s is - open it", abs, children[0])
 	}
-	return fmt.Sprintf("%q is not a repository, but %s are - open one of them", abs, strings.Join(children, ", "))
+	return fmt.Sprintf("%s is not a repository, but %s are - open one of them", abs, strings.Join(children, ", "))
 }
 
 func childRepos(dir string) []string {
