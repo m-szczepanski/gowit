@@ -280,3 +280,61 @@ func TestDiscardRemovesUnicodeUntracked(t *testing.T) {
 		t.Fatalf("unicode untracked file survived: %v", err)
 	}
 }
+
+func TestDiscardUntrackedNestedAndCollapsedDir(t *testing.T) {
+	dir := initRepo(t)
+	commitFile(t, dir, "a.txt", "head\n", "add a")
+	if err := os.Mkdir(filepath.Join(dir, "build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "build/sub.txt", "x\n")
+	writeFile(t, dir, "build/deep.txt", "y\n")
+	writeFile(t, dir, "a.txt", "ruined\n")
+
+	repo, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// status collapses the folder to "build/", but a file inside it must
+	// still be discardable, alongside a tracked edit in the same call
+	if err := repo.DiscardChanges(ctx, "a.txt", "build/sub.txt"); err != nil {
+		t.Fatalf("DiscardChanges nested path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "build/sub.txt")); !os.IsNotExist(err) {
+		t.Fatalf("build/sub.txt survived: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "build/deep.txt")); err != nil {
+		t.Fatalf("sibling should remain: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if err != nil || string(content) != "head\n" {
+		t.Fatalf("tracked edit not reverted: %q %v", content, err)
+	}
+
+	// checking the collapsed directory entry discards the whole folder
+	if err := repo.DiscardChanges(ctx, "build/"); err != nil {
+		t.Fatalf("DiscardChanges build/: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(err) {
+		t.Fatal("build/ should be gone")
+	}
+}
+
+func TestDiscardAbortsBeforeDeletingWhenTrackedPathBad(t *testing.T) {
+	dir := initRepo(t)
+	commitFile(t, dir, "a.txt", "a\n", "add a")
+	writeFile(t, dir, "scratch.txt", "temp\n")
+
+	repo, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DiscardChanges(context.Background(), "nosuch.txt", "scratch.txt"); !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want command_failed", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "scratch.txt")); err != nil {
+		t.Fatalf("nothing may be deleted when validation fails: %v", err)
+	}
+}

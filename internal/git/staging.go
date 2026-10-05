@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"slices"
+	"strings"
 )
 
 // Paths travel as argv after a literal "--": no shell and no glob
@@ -57,13 +58,16 @@ func (r *Repo) UnstageAll(ctx context.Context) error {
 }
 
 // DiscardChanges reverts work-tree edits for tracked paths and deletes
-// untracked files. Paths are classified via Status first because `git
-// restore` refuses untracked files: they go to `git clean -qf` instead,
-// which (without -d) never touches untracked directories. Ignored and
-// unknown paths fall into the restore group, where git fails loudly, so
-// they are never cleaned. Restore sources from the index, so staged
-// changes are not discarded. If restore succeeds but clean fails, the
-// tracked half of the call has already been applied.
+// untracked ones. Paths are classified via Status first because `git
+// restore` refuses untracked files: those go to `git clean -qf`. Status
+// collapses a fully-untracked folder to one "dir/" entry, and paths inside
+// such an entry are routed to clean as well. Naming a directory (collapsed
+// entry or its own path) removes the whole folder, which is the intent
+// behind discarding it in a checkbox UI. Ignored and unknown paths fall
+// into the restore group, where git fails loudly, so they are never
+// cleaned. Restore runs first and aborts the call on failure, so nothing
+// is deleted when any requested path is bad. Restore sources from the
+// index, so staged changes survive the discard.
 func (r *Repo) DiscardChanges(ctx context.Context, paths ...string) error {
 	if err := pathsGuard(paths); err != nil {
 		return err
@@ -73,15 +77,20 @@ func (r *Repo) DiscardChanges(ctx context.Context, paths ...string) error {
 		return err
 	}
 
-	untracked := map[string]bool{}
+	untracked, dirs := map[string]bool{}, []string{}
 	for _, f := range st.Files {
-		if f.Untracked {
+		if !f.Untracked {
+			continue
+		}
+		if strings.HasSuffix(f.Path, "/") {
+			dirs = append(dirs, f.Path)
+		} else {
 			untracked[f.Path] = true
 		}
 	}
 	var restore, clean []string
 	for _, p := range paths {
-		if untracked[p] {
+		if untracked[p] || slices.ContainsFunc(dirs, func(d string) bool { return strings.HasPrefix(p, d) }) {
 			clean = append(clean, p)
 		} else {
 			restore = append(restore, p)
