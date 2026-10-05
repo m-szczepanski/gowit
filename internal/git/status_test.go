@@ -267,17 +267,10 @@ func TestStatusReportsDetachedHead(t *testing.T) {
 	}
 }
 
-func TestStatusReportsDeletedAndTypeChanged(t *testing.T) {
+func TestStatusReportsDeleted(t *testing.T) {
 	dir := initRepo(t)
 	commitFile(t, dir, "gone.txt", "x\n", "add gone")
-	commitFile(t, dir, "link.txt", "y\n", "add link")
 	if err := os.Remove(filepath.Join(dir, "gone.txt")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(filepath.Join(dir, "link.txt")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("elsewhere", filepath.Join(dir, "link.txt")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -297,8 +290,57 @@ func TestStatusReportsDeletedAndTypeChanged(t *testing.T) {
 	if d := byPath["gone.txt"]; d.XY != ".D" || d.Change() != ChangeDeleted || !d.Unstaged() {
 		t.Fatalf("deleted = %+v, want unstaged .D", d)
 	}
-	if tc := byPath["link.txt"]; tc.XY != ".T" || tc.Change() != ChangeTypeChanged {
-		t.Fatalf("typechange = %+v, want .T", tc)
+}
+
+func TestStatusReportsTypeChanged(t *testing.T) {
+	dir := initRepo(t)
+	commitFile(t, dir, "link.txt", "y\n", "add link")
+	if err := os.Remove(filepath.Join(dir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("elsewhere", filepath.Join(dir, "link.txt")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	// Git for Windows defaults core.symlinks=false and materializes the
+	// link as a regular file, so git reports .M instead of .T
+	if out, _, err := runGit(context.Background(), dir, "config", "--bool", "core.symlinks"); err == nil && strings.TrimSpace(string(out)) == "false" {
+		t.Skip("git core.symlinks=false")
+	}
+
+	repo, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := repo.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+
+	for _, f := range res.Files {
+		if f.Path == "link.txt" {
+			if f.XY != ".T" || f.Change() != ChangeTypeChanged {
+				t.Fatalf("typechange = %+v, want .T", f)
+			}
+			return
+		}
+	}
+	t.Fatal("link.txt missing from status")
+}
+
+func TestStatusUnbornBranchHasNoOid(t *testing.T) {
+	dir := initRepo(t)
+
+	repo, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := repo.Status(context.Background())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+
+	if res.Branch.Head != "main" || res.Branch.Oid != "" || res.Branch.Detached {
+		t.Fatalf("branch = %+v, want main with empty oid on unborn branch", res.Branch)
 	}
 }
 

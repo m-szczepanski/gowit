@@ -1,6 +1,7 @@
 package git
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -105,12 +106,8 @@ func TestParseStatusV2RejectsMalformedRecords(t *testing.T) {
 		"bad ab count":            joinZ("# branch.ab +x -1"),
 	}
 	for name, out := range cases {
-		_, err := parseStatusV2(out)
-		if err == nil {
-			t.Fatalf("%s: want error", name)
-		}
-		if !strings.Contains(err.Error(), "malformed") {
-			t.Fatalf("%s: error = %v, want malformed", name, err)
+		if _, err := parseStatusV2(out); !errors.Is(err, ErrParseFailed) {
+			t.Fatalf("%s: err = %v, want ErrParseFailed", name, err)
 		}
 	}
 }
@@ -122,8 +119,8 @@ func TestParseStatusV2RejectsMalformedHeadersAndUnmerged(t *testing.T) {
 		"truncated unmerged":   joinZ("u UU N... 100644 100644 100644"),
 	}
 	for name, out := range cases {
-		if _, err := parseStatusV2(out); err == nil || !strings.Contains(err.Error(), "malformed") {
-			t.Fatalf("%s: err = %v, want malformed", name, err)
+		if _, err := parseStatusV2(out); !errors.Is(err, ErrParseFailed) {
+			t.Fatalf("%s: err = %v, want ErrParseFailed", name, err)
 		}
 	}
 }

@@ -85,6 +85,11 @@ func parseStatusV2(out []byte) (*StatusResult, error) {
 	return res, nil
 }
 
+const (
+	detachedHead = "(detached)"
+	initialOid   = "(initial)" // unborn branch: no commit exists yet
+)
+
 func parseStatusHeader(res *StatusResult, line string) error {
 	rest := strings.TrimPrefix(line, "# ")
 	key, value, ok := strings.Cut(rest, " ")
@@ -93,9 +98,11 @@ func parseStatusHeader(res *StatusResult, line string) error {
 	}
 	switch key {
 	case "branch.oid":
-		res.Branch.Oid = value
+		if value != initialOid {
+			res.Branch.Oid = value
+		}
 	case "branch.head":
-		if value == "(detached)" {
+		if value == detachedHead {
 			res.Branch.Detached = true
 		} else {
 			res.Branch.Head = value
@@ -123,7 +130,7 @@ func parseStatusHeader(res *StatusResult, line string) error {
 func parseCount(s string) (int, error) {
 	v, err := strconv.Atoi(strings.TrimLeft(s, "+-"))
 	if err != nil {
-		return 0, &GitError{Code: CodeParseFailed, Message: fmt.Sprintf("malformed branch.ab count %q", s)}
+		return 0, &GitError{Code: CodeParseFailed, Message: fmt.Sprintf("malformed branch.ab count %q", s), ExitCode: -1}
 	}
 	return v, nil
 }
@@ -133,5 +140,5 @@ func newStage(num int, mode, oid string) MergeStage {
 }
 
 func parseError(seg string) error {
-	return &GitError{Code: CodeParseFailed, Message: "malformed porcelain v2 record: " + seg}
+	return &GitError{Code: CodeParseFailed, Message: "malformed porcelain v2 record: " + seg, ExitCode: -1}
 }
