@@ -55,9 +55,8 @@ type Watcher struct {
 
 	fsw      *fsnotify.Watcher
 	done     chan struct{}
-	closed   chan struct{}
 	stopOnce sync.Once
-	used     int
+	wg       sync.WaitGroup
 	polling  bool
 }
 
@@ -104,40 +103,43 @@ func (w *Watcher) Start(ctx context.Context) error {
 	}
 	w.fsw = fsw
 	w.done = make(chan struct{})
-	w.closed = make(chan struct{})
 	w.ctx = ctx
 
 	addErr := w.addTree(ctx, w.root)
 	if addErr != nil && !errors.Is(addErr, errBudget) {
 		// ctx already dead: hand back a pristine watcher; Stop must not
-		// wait for a run loop that never started
+		// wait for a loop that never started
 		_ = fsw.Close()
-		w.fsw, w.done, w.closed = nil, nil, nil
+		w.fsw, w.done = nil, nil
 		return addErr
 	}
 	w.addGitWatches()
-	if errors.Is(addErr, errBudget) || w.used >= w.budget {
+	if errors.Is(addErr, errBudget) || len(w.fsw.WatchList()) >= w.budget {
 		w.demote()
 	}
+	w.wg.Add(1)
 	go w.run(ctx)
 	return nil
 }
 
 // Stop ends delivery and releases OS handles. Safe to call concurrently or
-// twice; returns after the watch loop has exited.
+// twice; returns only after neither the event loop nor the poller can emit
+// again.
 func (w *Watcher) Stop() error {
 	if w.done == nil {
 		return nil
 	}
 	w.stopOnce.Do(func() { close(w.done) })
-	<-w.closed
+	w.wg.Wait()
 	return nil
 }
 
 // addWatch registers one path. Budget exhaustion or an OS failure leaves
 // that path unwatched; the poll fallback takes over so no gap stays dark.
 func (w *Watcher) addWatch(path string) error {
-	if w.used >= w.budget {
+	// WatchList reflects implicit removals (deleted directories), so the
+	// budget tracks live handles rather than lifetime registrations
+	if len(w.fsw.WatchList()) >= w.budget {
 		w.demote()
 		return errBudget
 	}
@@ -145,7 +147,6 @@ func (w *Watcher) addWatch(path string) error {
 		w.demote()
 		return err
 	}
-	w.used++
 	return nil
 }
 
@@ -155,10 +156,12 @@ func (w *Watcher) demote() {
 		return
 	}
 	w.polling = true
+	w.wg.Add(1)
 	go w.poll()
 }
 
 func (w *Watcher) poll() {
+	defer w.wg.Done()
 	ticker := time.NewTicker(w.pollEvery)
 	defer ticker.Stop()
 	prev := w.signature()
@@ -171,14 +174,17 @@ func (w *Watcher) poll() {
 		case <-ticker.C:
 			if sig := w.signature(); sig != prev {
 				prev = sig
-				w.onChange()
+				w.emit()
 			}
 		}
 	}
 }
 
-// signature fingerprints everything a signal depends on: paths, sizes and
-// mtimes across the work tree and .git state, with git noise skipped.
+// signature fingerprints everything a signal depends on: paths, sizes,
+// mtimes and modes across the work tree and .git state, with git noise
+// skipped. On filesystems with coarse mtime granularity (FAT/exFAT) a
+// same-size edit inside one clock tick can go unnoticed; accepted for the
+// degraded mode.
 func (w *Watcher) signature() string {
 	var b strings.Builder
 	_ = filepath.WalkDir(w.root, func(path string, d fs.DirEntry, err error) error {
@@ -197,7 +203,7 @@ func (w *Watcher) signature() string {
 		if err != nil {
 			return nil
 		}
-		fmt.Fprintf(&b, "%s|%d|%d\n", path, info.Size(), info.ModTime().UnixNano())
+		fmt.Fprintf(&b, "%s|%d|%d|%s\n", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
 		return nil
 	})
 	return b.String()
@@ -266,7 +272,7 @@ func (w *Watcher) relevant(ev fsnotify.Event) bool {
 }
 
 func (w *Watcher) run(ctx context.Context) {
-	defer close(w.closed)
+	defer w.wg.Done()
 	defer func() { _ = w.fsw.Close() }()
 
 	timer := time.NewTimer(time.Hour)
@@ -287,10 +293,32 @@ func (w *Watcher) run(ctx context.Context) {
 			if ev.Op&fsnotify.Create != 0 {
 				w.registerNewDir(ev.Name)
 			}
+		case err, ok := <-w.fsw.Errors:
+			// fsnotify's backends send on Errors inline and block until
+			// it is drained; ignoring the channel wedges the stream.
+			// Queue overflow is exactly the event flood the poller exists
+			// for, so it engages the fallback.
+			if !ok {
+				return
+			}
+			if errors.Is(err, fsnotify.ErrEventOverflow) {
+				w.demote()
+			}
 		case <-timer.C:
-			w.onChange()
+			w.emit()
 		}
 	}
+}
+
+// emit delivers the signal unless Stop began concurrently; the watcher
+// never calls back into App after Stop returned.
+func (w *Watcher) emit() {
+	select {
+	case <-w.done:
+		return
+	default:
+	}
+	w.onChange()
 }
 
 // registerNewDir brings directories created after Start under watch, so

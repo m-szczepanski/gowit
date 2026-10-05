@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 // signals collects onChange invocations.
@@ -458,7 +460,7 @@ func TestPollExitsOnContextCancel(t *testing.T) {
 func TestPollSurvivesVanishedRoot(t *testing.T) {
 	dir := t.TempDir()
 	onChange, ch := signalChan(t)
-	w := New(dir, onChange, Options{MaxWatchers: 1, PollEvery: 30 * time.Millisecond})
+	w := New(dir, onChange, Options{Debounce: 10 * time.Millisecond, MaxWatchers: 1, PollEvery: 30 * time.Millisecond})
 	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -475,10 +477,11 @@ func TestPollSurvivesVanishedRoot(t *testing.T) {
 	if err := os.RemoveAll(dir); err != nil {
 		t.Fatal(err)
 	}
+	// event path and poller may each report the vanishing once
 	if !waitFor(t, ch, 2*time.Second) {
-		t.Fatal("vanishing the root must produce one last signal")
+		t.Fatal("vanishing the root must produce a final signal")
 	}
-	noSignal(t, ch, 200*time.Millisecond)
+	drainQuiet(t, ch)
 }
 
 func drainQuiet(t *testing.T, ch chan struct{}) {
@@ -618,14 +621,19 @@ func TestPollSignatureSurvivesUnreadableDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+	if err := os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	w := New(dir, func() {}, Options{MaxWatchers: 1, PollEvery: 40 * time.Millisecond})
 	if err := w.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = w.Stop() }()
-	if sig := w.signature(); !strings.Contains(sig, "ok") && sig == "" {
-		t.Fatal("signature walk aborted at the unreadable dir")
+
+	sig := w.signature()
+	if !strings.Contains(sig, filepath.Join(dir, "locked")) || !strings.Contains(sig, "ok.txt") {
+		t.Fatalf("signature walk must visit entries around the unreadable dir, got %q", sig)
 	}
 }
 
@@ -640,4 +648,77 @@ func TestNilOnChangeIsTolerated(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
+}
+
+func TestEventOverflowEngagesPollFallback(t *testing.T) {
+	dir := t.TempDir()
+	onChange, ch := signalChan(t)
+	w := New(dir, onChange, Options{Debounce: 10 * time.Millisecond, PollEvery: 40 * time.Millisecond})
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Stop() }()
+
+	// simulate the kernel queue overflow the backends report on Errors;
+	// the run loop must drain it and engage the poller
+	w.fsw.Errors <- fsnotify.ErrEventOverflow
+	if err := os.WriteFile(filepath.Join(dir, "quiet.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// one signal from the surviving event watch, then poller-driven ones
+	if !waitFor(t, ch, 2*time.Second) {
+		t.Fatal("no signal after overflow injection")
+	}
+	drainQuiet(t, ch)
+	if err := os.WriteFile(filepath.Join(dir, "quiet.txt"), []byte("y"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Events may be wedged for real backends after overflow; the poller
+	// must carry delivery alone
+	if !waitFor(t, ch, 2*time.Second) {
+		t.Fatal("poll fallback inactive after overflow")
+	}
+}
+
+func TestStopJoinsPoller(t *testing.T) {
+	dir := t.TempDir()
+	var mu sync.Mutex
+	signals := 0
+	w := New(dir, func() {
+		mu.Lock()
+		signals++
+		mu.Unlock()
+		time.Sleep(50 * time.Millisecond) // slow consumer
+	}, Options{MaxWatchers: 1, PollEvery: 10 * time.Millisecond, Debounce: time.Millisecond})
+	if err := w.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	if err := w.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	before := signals
+	mu.Unlock()
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	after := signals
+	mu.Unlock()
+	if before != after {
+		t.Fatalf("onChange fired %d more times after Stop returned", after-before)
+	}
+}
+
+func TestEmitIsSilentAfterDone(t *testing.T) {
+	fired := false
+	w := New(t.TempDir(), func() { fired = true }, Options{})
+	w.done = make(chan struct{})
+	close(w.done)
+	w.emit()
+	if fired {
+		t.Fatal("emit must not call back once done is closed")
+	}
 }
