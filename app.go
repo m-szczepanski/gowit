@@ -12,7 +12,16 @@ import (
 
 	"gowit/internal/config"
 	"gowit/internal/git"
+	"gowit/internal/watcher"
 )
+
+// workTreeWatcher is the watcher seam App drives; *watcher.Watcher
+// implements it, tests substitute a controlled stand-in because the real
+// one depends on OS event timing.
+type workTreeWatcher interface {
+	Start(ctx context.Context) error
+	Stop() error
+}
 
 // App is a thin bridge between the frontend and internal packages.
 // Business logic lives in internal/*, not here (see docs/ARCHITECTURE.md §4).
@@ -25,6 +34,8 @@ type App struct {
 	pickFolder func(ctx context.Context) (string, error)
 	emit       func(ctx context.Context, event string, data ...interface{})
 	open       func(path string) (*git.Repo, error)
+	watch      func(root string, onChange func()) workTreeWatcher
+	watcher    workTreeWatcher
 	cfg        *config.Store
 }
 
@@ -33,7 +44,10 @@ func NewApp() *App {
 		pickFolder: runtimeOpenFolder,
 		emit:       runtime.EventsEmit,
 		open:       git.Open,
-		cfg:        config.NewStore(resolveConfigFile(), time.Now),
+		watch: func(root string, onChange func()) workTreeWatcher {
+			return watcher.New(root, onChange, watcher.Options{})
+		},
+		cfg: config.NewStore(resolveConfigFile(), time.Now),
 	}
 }
 
@@ -89,7 +103,29 @@ func (a *App) OpenRepository(path string) OpenRepositoryResult {
 	// recents are best effort: a failed settings write must not undo an open
 	_ = a.cfg.AddRecent(repo.Path())
 	a.emit(a.ctx, "repo:opened", repo.Path())
+	a.restartWatcher(repo.Path())
 	return OpenRepositoryResult{Path: repo.Path()}
+}
+
+// restartWatcher moves directory watching onto path, stopping whatever was
+// running before. Watching is best effort: a failed Start never invalidates
+// the open repository.
+func (a *App) restartWatcher(path string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.stopWatcherLocked()
+	w := a.watch(path, func() { a.emit(a.ctx, "status:changed", path) })
+	if err := w.Start(a.ctx); err != nil {
+		return
+	}
+	a.watcher = w
+}
+
+func (a *App) stopWatcherLocked() {
+	if a.watcher != nil {
+		_ = a.watcher.Stop()
+		a.watcher = nil
+	}
 }
 
 // GetSettings returns the persisted user settings (defaults when absent).
@@ -133,6 +169,7 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) shutdown(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.stopWatcherLocked()
 	if a.repo != nil {
 		_ = a.repo.Close()
 		_ = a.cfg.AddRecent(a.repo.Path())

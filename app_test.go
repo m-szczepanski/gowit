@@ -44,7 +44,8 @@ func newTestApp(t *testing.T) (*App, string, *[]emitted) {
 		emit: func(_ context.Context, event string, data ...interface{}) {
 			*events = append(*events, emitted{event, data})
 		},
-		cfg: config.NewStore(file, func() time.Time { return testTime }),
+		watch: func(_ string, _ func()) workTreeWatcher { return silentWatcher{} },
+		cfg:   config.NewStore(file, func() time.Time { return testTime }),
 	}
 	app.startup(context.Background())
 	return app, file, events
@@ -325,5 +326,116 @@ func TestResolveConfigFileFallsBackToTempWhenNoHome(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(fallbackDir) })
 	if _, err := os.Stat(filepath.Join(fallbackDir, "config.json")); err != nil {
 		t.Fatalf("fallback config missing under %s: %v", fallbackDir, err)
+	}
+}
+
+// silentWatcher stands in for the OS-bound watcher so #13-style tests never
+// start real fsnotify watches.
+type silentWatcher struct{}
+
+func (silentWatcher) Start(context.Context) error { return nil }
+func (silentWatcher) Stop() error                 { return nil }
+
+type recordingWatcher struct {
+	root     string
+	onChange func()
+	startErr error
+	started  int
+	stopped  int
+}
+
+func (r *recordingWatcher) Start(context.Context) error {
+	r.started++
+	return r.startErr
+}
+
+func (r *recordingWatcher) Stop() error {
+	r.stopped++
+	return nil
+}
+
+func TestOpenStartsWatcherAndSignalsStatusChanged(t *testing.T) {
+	app, _, events := newTestApp(t)
+	dir := initRepoForAppTest(t)
+	var last *recordingWatcher
+	app.watch = func(root string, onChange func()) workTreeWatcher {
+		last = &recordingWatcher{root: root, onChange: onChange}
+		return last
+	}
+
+	res := app.OpenRepository(dir)
+	if res.Code != "" {
+		t.Fatalf("open: %+v", res)
+	}
+	if last.started != 1 {
+		t.Fatalf("watcher starts = %d, want 1", last.started)
+	}
+	want, _ := filepath.EvalSymlinks(dir)
+	if last.root != want && last.root != dir {
+		t.Fatalf("watch root = %q, want %q", last.root, want)
+	}
+
+	last.onChange()
+	got := *events
+	found := false
+	for _, e := range got {
+		if e.event == "status:changed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no status:changed emitted: %v", got)
+	}
+}
+
+func TestReopenStopsPreviousWatcher(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	first := initRepoForAppTest(t)
+	second := initRepoForAppTest(t)
+	var watchers []*recordingWatcher
+	app.watch = func(root string, onChange func()) workTreeWatcher {
+		w := &recordingWatcher{root: root, onChange: onChange}
+		watchers = append(watchers, w)
+		return w
+	}
+
+	app.OpenRepository(first)
+	app.OpenRepository(second)
+	if watchers[0].stopped != 1 || watchers[1].started != 1 {
+		t.Fatalf("swap did not replace watcher: %v %+v", *watchers[0], *watchers[1])
+	}
+
+	app.shutdown(context.Background())
+	if watchers[1].stopped != 1 {
+		t.Fatalf("shutdown did not stop active watcher: %+v", *watchers[1])
+	}
+}
+
+func TestWatcherStartFailureKeepsOpenValid(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	dir := initRepoForAppTest(t)
+	app.watch = func(root string, onChange func()) workTreeWatcher {
+		return &recordingWatcher{startErr: errors.New("no inotify left")}
+	}
+
+	if res := app.OpenRepository(dir); res.Code != "" {
+		t.Fatalf("open should survive watcher failure, got %+v", res)
+	}
+	app.mu.Lock()
+	running := app.watcher
+	app.mu.Unlock()
+	if running != nil {
+		t.Fatal("failed watcher must not be stored")
+	}
+}
+
+func TestNewAppDefaultWatchSeamConstructsWatcher(t *testing.T) {
+	app := NewApp()
+	w := app.watch(t.TempDir(), func() {})
+	if w == nil {
+		t.Fatal("default watch returned nil")
+	}
+	if err := w.Stop(); err != nil {
+		t.Fatalf("Stop before Start: %v", err)
 	}
 }
