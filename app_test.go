@@ -21,14 +21,33 @@ func execGitInit(dir string) ([]byte, error) {
 	return exec.Command("git", "init", dir).CombinedOutput()
 }
 
-func newTestApp(t *testing.T) (*App, string) {
+func initRepoForAppTest(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if out, err := execGitInit(dir); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	return dir
+}
+
+type emitted struct {
+	event string
+	data  []interface{}
+}
+
+func newTestApp(t *testing.T) (*App, string, *[]emitted) {
 	t.Helper()
 	file := filepath.Join(t.TempDir(), "config.json")
+	events := &[]emitted{}
 	app := &App{
+		open: git.Open,
+		emit: func(_ context.Context, event string, data ...interface{}) {
+			*events = append(*events, emitted{event, data})
+		},
 		cfg: config.NewStore(file, func() time.Time { return testTime }),
 	}
 	app.startup(context.Background())
-	return app, file
+	return app, file, events
 }
 
 func TestNewApp(t *testing.T) {
@@ -67,7 +86,7 @@ func TestStartupShutdown(t *testing.T) {
 }
 
 func TestShutdownClosesOpenRepo(t *testing.T) {
-	app, _ := newTestApp(t)
+	app, _, _ := newTestApp(t)
 	dir := t.TempDir()
 	if out, err := execGitInit(dir); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
@@ -90,7 +109,7 @@ func TestShutdownClosesOpenRepo(t *testing.T) {
 }
 
 func TestSettingsRoundTrip(t *testing.T) {
-	app, file := newTestApp(t)
+	app, file, _ := newTestApp(t)
 
 	if got := app.GetSettings().Theme; got != config.DefaultTheme {
 		t.Fatalf("default Theme = %q, want %q", got, config.DefaultTheme)
@@ -121,7 +140,7 @@ func TestSetSettingsReportsSaveFailure(t *testing.T) {
 }
 
 func TestRecentReposRoundTrip(t *testing.T) {
-	app, _ := newTestApp(t)
+	app, _, _ := newTestApp(t)
 
 	if got := app.GetRecentRepos(); len(got) != 0 {
 		t.Fatalf("initial recents = %v, want none", got)
@@ -149,8 +168,8 @@ func TestAddRecentRepoReportsSaveFailure(t *testing.T) {
 	}
 }
 
-func TestOpenFolderRecordsRecent(t *testing.T) {
-	app, _ := newTestApp(t)
+func TestOpenFolderRecordsNothing(t *testing.T) {
+	app, _, _ := newTestApp(t)
 	app.pickFolder = func(context.Context) (string, error) { return "/picked/repo", nil }
 
 	got := app.OpenFolder()
@@ -158,14 +177,92 @@ func TestOpenFolderRecordsRecent(t *testing.T) {
 	if got.Path != "/picked/repo" || got.Code != "" {
 		t.Fatalf("OpenFolder = %+v", got)
 	}
+	if len(app.GetRecentRepos()) != 0 {
+		t.Fatal("the picker must not record; OpenRepository owns recents")
+	}
+}
+
+func TestOpenRepositoryBindsEmitsAndRecords(t *testing.T) {
+	app, _, events := newTestApp(t)
+	dir := initRepoForAppTest(t)
+	// git resolves symlinks in the toplevel (macOS /var -> /private/var)
+	toplevel, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := app.OpenRepository(dir)
+
+	if res.Code != "" {
+		t.Fatalf("OpenRepository = %+v", res)
+	}
+	if res.Path != toplevel {
+		t.Fatalf("res.Path = %q, want resolved %q", res.Path, toplevel)
+	}
+	if app.repo == nil || app.repo.Path() != toplevel {
+		t.Fatalf("repo = %v, want bound to %s", app.repo, toplevel)
+	}
+	if len(*events) != 1 || (*events)[0].event != "repo:opened" || (*events)[0].data[0] != toplevel {
+		t.Fatalf("events = %v, want one repo:opened with the path", *events)
+	}
 	recents := app.GetRecentRepos()
-	if len(recents) != 1 || recents[0].Path != "/picked/repo" {
-		t.Fatalf("recents = %v, want the opened folder recorded", recents)
+	if len(recents) != 1 || recents[0].Path != toplevel {
+		t.Fatalf("recents = %v, want the opened repo", recents)
+	}
+}
+
+func TestOpenRepositoryReportsGitValidationCodes(t *testing.T) {
+	app, _, events := newTestApp(t)
+
+	res := app.OpenRepository(t.TempDir())
+
+	if res.Code != string(git.CodeNotARepository) || res.Message == "" {
+		t.Fatalf("OpenRepository(plain dir) = %+v, want not_a_repository with message", res)
+	}
+	if app.repo != nil {
+		t.Fatal("failed open must leave repo unset")
+	}
+	if len(*events) != 0 {
+		t.Fatalf("events = %v, want none on failure", *events)
+	}
+	if len(app.GetRecentRepos()) != 0 {
+		t.Fatal("failed open must not touch recents")
+	}
+}
+
+func TestOpenRepositoryReplacesPreviousRepo(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	first := initRepoForAppTest(t)
+	second := initRepoForAppTest(t)
+
+	app.OpenRepository(first)
+	res := app.OpenRepository(second)
+
+	want, err := filepath.EvalSymlinks(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Code != "" || app.repo == nil || app.repo.Path() != want {
+		t.Fatalf("second open = %+v, repo = %v, want bound to %s", res, app.repo, want)
+	}
+	if recents := app.GetRecentRepos(); len(recents) != 2 || recents[0].Path != want {
+		t.Fatalf("recents = %v, want both opens with newest first", recents)
+	}
+}
+
+func TestOpenRepositoryReportsUnwrapFailure(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	app.open = func(string) (*git.Repo, error) { return nil, errors.New("spawn failed") }
+
+	res := app.OpenRepository("/x")
+
+	if res.Code != openFailedCode || res.Message != "spawn failed" {
+		t.Fatalf("OpenRepository = %+v, want open_failed fallback", res)
 	}
 }
 
 func TestOpenFolderCancelRecordsNothing(t *testing.T) {
-	app, _ := newTestApp(t)
+	app, _, _ := newTestApp(t)
 	app.pickFolder = func(context.Context) (string, error) { return "", nil }
 
 	got := app.OpenFolder()
@@ -179,7 +276,7 @@ func TestOpenFolderCancelRecordsNothing(t *testing.T) {
 }
 
 func TestOpenFolderCarriesTypedError(t *testing.T) {
-	app, _ := newTestApp(t)
+	app, _, _ := newTestApp(t)
 	app.pickFolder = func(context.Context) (string, error) {
 		return "", errors.New("dialog unavailable")
 	}
