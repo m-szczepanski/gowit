@@ -355,12 +355,49 @@ func (r *recordingWatcher) Stop() error {
 	return nil
 }
 
+func newChannelApp(t *testing.T) (*App, chan emitted) {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "config.json")
+	ch := make(chan emitted, 32)
+	app := &App{
+		open: git.Open,
+		emit: func(_ context.Context, event string, data ...interface{}) {
+			ch <- emitted{event: event, data: data}
+		},
+		watch: func(_ string, _ func()) workTreeWatcher { return silentWatcher{} },
+		cfg:   config.NewStore(file, func() time.Time { return testTime }),
+	}
+	app.startup(context.Background())
+	return app, ch
+}
+
+func waitEvent(t *testing.T, ch chan emitted, name string) emitted {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-ch:
+			if ev.event == name {
+				return ev
+			}
+			// tolerate the repo:opened preamble; other statuses are bugs
+			if ev.event != "repo:opened" {
+				t.Fatalf("unexpected event %q while waiting for %q", ev.event, name)
+			}
+		case <-deadline:
+			t.Fatalf("no %q event in time", name)
+		}
+	}
+}
+
 func TestOpenStartsWatcherAndSignalsStatusChanged(t *testing.T) {
-	app, _, events := newTestApp(t)
-	dir := initRepoForAppTest(t)
+	app, ch := newChannelApp(t)
+	dir := initRepoWithCommit(t)
 	var last *recordingWatcher
+	var cb func()
 	app.watch = func(root string, onChange func()) workTreeWatcher {
-		last = &recordingWatcher{root: root, onChange: onChange}
+		cb = onChange
+		last = &recordingWatcher{root: root}
 		return last
 	}
 
@@ -371,20 +408,85 @@ func TestOpenStartsWatcherAndSignalsStatusChanged(t *testing.T) {
 	if last.started != 1 {
 		t.Fatalf("watcher starts = %d, want 1", last.started)
 	}
-	if want, _ := filepath.EvalSymlinks(dir); last.root != want {
+	want, _ := filepath.EvalSymlinks(dir)
+	if last.root != want {
 		t.Fatalf("watch root = %q, want resolved %q", last.root, want)
 	}
+	if cb == nil {
+		t.Fatal("no onChange installed")
+	}
 
-	last.onChange()
-	got := *events
-	found := false
-	for _, e := range got {
-		if e.event == "status:changed" {
-			found = true
+	cb()
+	ev := waitEvent(t, ch, "repo:status-changed")
+	if len(ev.data) != 1 {
+		t.Fatalf("payload count = %d, want the StatusResponse", len(ev.data))
+	}
+	snap, ok := ev.data[0].(StatusResponse)
+	if !ok {
+		t.Fatalf("payload type %T, want StatusResponse", ev.data[0])
+	}
+	if snap.Code != "" || snap.Path != want || snap.Branch.Head == "" || len(snap.Files) != 0 {
+		t.Fatalf("payload = %+v, want clean snapshot of %s", snap, want)
+	}
+}
+
+func TestWatcherSignalEmitsFreshPayloadEndToEnd(t *testing.T) {
+	app, ch := newChannelApp(t)
+	app.watch = func(root string, onChange func()) workTreeWatcher {
+		return watcher.New(root, onChange, watcher.Options{Debounce: 20 * time.Millisecond})
+	}
+	repoA := initRepoWithCommit(t)
+	repoB := initRepoWithCommit(t)
+	resolvedA, _ := filepath.EvalSymlinks(repoA)
+	resolvedB, _ := filepath.EvalSymlinks(repoB)
+
+	if res := app.OpenRepository(repoA); res.Code != "" {
+		t.Fatalf("open A: %+v", res)
+	}
+	writeFileForAppTest(t, repoA, "fresh.txt", "x\n")
+	ev := waitEvent(t, ch, "repo:status-changed")
+	snap := ev.data[0].(StatusResponse)
+	if snap.Path != resolvedA || len(snap.Files) == 0 || snap.Files[0].Path != "fresh.txt" {
+		t.Fatalf("payload after touching A = %+v", snap)
+	}
+
+	if res := app.OpenRepository(repoB); res.Code != "" {
+		t.Fatalf("open B: %+v", res)
+	}
+	drainQuietApp(ch)
+
+	writeFileForAppTest(t, repoB, "b-only.txt", "y\n")
+	ev = waitEvent(t, ch, "repo:status-changed")
+	snap = ev.data[0].(StatusResponse)
+	if snap.Path != resolvedB || snap.Files[0].Path != "b-only.txt" {
+		t.Fatalf("payload after touching B = %+v", snap)
+	}
+
+	// A's watcher must be gone: whatever still arrives after touching A has
+	// to be a duplicate snapshot of B, never an A payload
+	writeFileForAppTest(t, repoA, "late.txt", "z\n")
+	deadline := time.After(1500 * time.Millisecond)
+	for {
+		select {
+		case ev2 := <-ch:
+			s2 := ev2.data[0].(StatusResponse)
+			if s2.Path == resolvedA {
+				t.Fatalf("stale watcher fired with A payload: %+v", s2)
+			}
+		case <-deadline:
+			app.shutdown(context.Background())
+			return
 		}
 	}
-	if !found {
-		t.Fatalf("no status:changed emitted: %v", got)
+}
+
+func drainQuietApp(ch chan emitted) {
+	for {
+		select {
+		case <-ch:
+		case <-time.After(300 * time.Millisecond):
+			return
+		}
 	}
 }
 

@@ -75,6 +75,10 @@ type OpenRepositoryResult struct {
 }
 
 const (
+	// statusChangedEvent carries a fresh StatusResponse payload each time the
+	// active repo's watcher settles; the UI adopts it instead of refetching.
+	statusChangedEvent = "repo:status-changed"
+
 	saveFailedCode = "save_failed"
 	openFailedCode = "open_failed"
 	callFailedCode = "call_failed"
@@ -82,9 +86,12 @@ const (
 )
 
 // StatusResponse is the status read model for the frontend: branch plus
-// classified files, with the typed error envelope.
+// classified files, with the typed error envelope. Path identifies the repo
+// the snapshot belongs to, so event consumers can drop payloads that raced
+// a repo switch.
 type StatusResponse struct {
 	CallResult
+	Path   string           `json:"path"`
 	Branch git.BranchStatus `json:"branch"`
 	Files  []git.FileStatus `json:"files"`
 }
@@ -103,9 +110,9 @@ func (a *App) GetStatus() StatusResponse {
 func (a *App) statusOf(repo *git.Repo) StatusResponse {
 	res, err := repo.Status(a.ctx)
 	if err != nil {
-		return StatusResponse{CallResult: callResult(err, callFailedCode)}
+		return StatusResponse{CallResult: callResult(err, callFailedCode), Path: repo.Path()}
 	}
-	return StatusResponse{Branch: res.Branch, Files: res.Files}
+	return StatusResponse{Path: repo.Path(), Branch: res.Branch, Files: res.Files}
 }
 
 // StageFiles adds the given paths to the index.
@@ -189,17 +196,25 @@ func (a *App) OpenRepository(path string) OpenRepositoryResult {
 
 // restartWatcher moves directory watching onto path, stopping whatever was
 // running before. Watching is best effort: a failed Start never invalidates
-// the open repository. onChange runs on the watcher goroutine while this
-// call may hold a.mu; the closure must never call back into locked methods.
+// the open repository. The onChange closure only spawns emitStatus; calling
+// back into locked App methods from the watcher goroutine would invert the
+// lock order against a concurrent restart.
 func (a *App) restartWatcher(path string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.stopWatcherLocked()
-	w := a.watch(path, func() { a.emit(a.ctx, "status:changed", path) })
+	w := a.watch(path, func() { go a.emitStatus() })
 	if err := w.Start(a.ctx); err != nil {
 		return
 	}
 	a.watcher = w
+}
+
+// emitStatus runs on a goroutine of its own (see restartWatcher): the
+// watcher loop must stay free so Stop can join it, and the detached emit
+// keeps onChange from locking a.mu while a restart holds it.
+func (a *App) emitStatus() {
+	a.emit(a.ctx, statusChangedEvent, a.GetStatus())
 }
 
 func (a *App) stopWatcherLocked() {

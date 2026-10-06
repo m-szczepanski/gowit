@@ -7,78 +7,102 @@ import {createQueryClient} from '@/lib/queryClient';
 import {queryKeys} from '@/lib/queryKeys';
 import {useRepoStore} from '@/stores/repo';
 
-type Listener = () => void;
+type Handler = (...data: unknown[]) => void;
 
-const bus = new Map<string, Set<Listener>>();
-let subscribeCalls = 0;
+const listeners = new Map<string, Set<Handler>>();
+let subscribeCount = 0;
 
 vi.mock('../../wailsjs/runtime/runtime', () => ({
-    EventsOn: (event: string, cb: Listener) => {
-        subscribeCalls++;
-        if (!bus.has(event)) {
-            bus.set(event, new Set());
+    EventsOn: (event: string, cb: Handler) => {
+        subscribeCount++;
+        if (!listeners.has(event)) {
+            listeners.set(event, new Set());
         }
-        bus.get(event)!.add(cb);
+        listeners.get(event)!.add(cb);
         return () => {
-            bus.get(event)!.delete(cb);
+            listeners.get(event)!.delete(cb);
         };
     }
 }));
 
-function fire(event: string) {
-    for (const cb of bus.get(event) ?? []) {
-        cb();
+function fire(event: string, ...data: unknown[]) {
+    for (const cb of listeners.get(event) ?? []) {
+        cb(...data);
     }
 }
 
-describe('useStatusEvents', () => {
-    let client: ReturnType<typeof createQueryClient>;
-    let invalidate: ReturnType<typeof vi.spyOn>;
-    let Wrapper: ({children}: { children?: ReactNode }) => ReactNode;
+const snapshot = (path: string) => ({
+    code: '',
+    message: '',
+    path,
+    branch: {head: 'main', oid: 'abc', detached: false, upstream: '', ahead: 0, behind: 0},
+    files: [{xy: '.M', path: 'a.txt', staged: false, unstaged: true, change: 'modified'}]
+});
 
+function setup() {
+    const client = createQueryClient();
+    const Wrapper = ({children}: {children?: ReactNode}) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    return {client, Wrapper};
+}
+
+describe('useStatusEvents', () => {
     beforeEach(() => {
-        bus.clear();
-        subscribeCalls = 0;
-        client = createQueryClient();
-        invalidate = vi.spyOn(client, 'invalidateQueries');
-        Wrapper = ({children}: {children?: ReactNode}) => (
-            <QueryClientProvider client={client}>{children}</QueryClientProvider>
-        );
+        listeners.clear();
+        subscribeCount = 0;
         useRepoStore.getState().closeRepo();
     });
 
-    it('subscribes on open repo and invalidates the status key on status:changed', async () => {
+    it('adopts a matching payload into the status cache without refetching', async () => {
         useRepoStore.getState().openRepo('/repo/one');
-        renderHook(() => useStatusEvents(), {wrapper: Wrapper});
-        await waitFor(() => expect(subscribeCalls).toBe(1));
+        const {client, Wrapper} = setup();
+        const invalidate = vi.spyOn(client, 'invalidateQueries');
+        const setQueryData = vi.spyOn(client, 'setQueryData');
 
-        fire('status:changed');
-        expect(invalidate).toHaveBeenCalledWith({queryKey: queryKeys.status('/repo/one')});
+        renderHook(() => useStatusEvents(), {wrapper: Wrapper});
+        await waitFor(() => expect(subscribeCount).toBe(1));
+
+        fire('repo:status-changed', snapshot('/repo/one'));
+        expect(setQueryData).toHaveBeenCalledWith(queryKeys.status('/repo/one'), snapshot('/repo/one'));
+        expect(invalidate).not.toHaveBeenCalled();
     });
 
-    it('subscribes nothing while closed, and resubscribes on repo switch', async () => {
+    it('invalidates instead of adopting when the payload is stale or broken', async () => {
+        useRepoStore.getState().openRepo('/repo/one');
+        const {client, Wrapper} = setup();
+        const setQueryData = vi.spyOn(client, 'setQueryData');
+
+        const invalidate = vi.spyOn(client, 'invalidateQueries');
+        renderHook(() => useStatusEvents(), {wrapper: Wrapper});
+        await waitFor(() => expect(subscribeCount).toBe(1));
+
+        fire('repo:status-changed', snapshot('/repo/other'));
+        fire('repo:status-changed', {code: 'no_repo', message: 'gone', path: '', branch: {}, files: []});
+        fire('repo:status-changed');
+        expect(setQueryData).not.toHaveBeenCalled();
+        expect(invalidate).toHaveBeenCalledTimes(3);
+    });
+
+    it('subscribes only while open, retargets on switch, detaches on unmount', async () => {
+        const {client, Wrapper} = setup();
+        const setQueryData = vi.spyOn(client, 'setQueryData');
         const {rerender, unmount} = renderHook(() => useStatusEvents(), {wrapper: Wrapper});
-        await waitFor(() => expect(subscribeCalls).toBe(0));
-        expect(invalidate).not.toHaveBeenCalled();
+        await waitFor(() => expect(subscribeCount).toBe(0));
+
+        useRepoStore.getState().openRepo('/repo/one');
+        rerender();
+        await waitFor(() => expect(subscribeCount).toBe(1));
+        expect(listeners.get('repo:status-changed')!.size).toBe(1);
 
         useRepoStore.getState().openRepo('/repo/two');
         rerender();
-        await waitFor(() => expect(subscribeCalls).toBe(1));
-
-        fire('status:changed');
-        expect(invalidate).toHaveBeenCalledWith({queryKey: queryKeys.status('/repo/two')});
+        await waitFor(() => expect(subscribeCount).toBe(2));
+        expect(listeners.get('repo:status-changed')!.size).toBe(1);
 
         unmount();
-        fire('status:changed');
-        expect(invalidate).toHaveBeenCalledTimes(1);
-    });
-
-    it('only fires for its own event name', async () => {
-        useRepoStore.getState().openRepo('/repo/one');
-        renderHook(() => useStatusEvents(), {wrapper: Wrapper});
-        await waitFor(() => expect(subscribeCalls).toBe(1));
-
-        fire('repo:opened');
-        expect(invalidate).not.toHaveBeenCalled();
+        expect(listeners.get('repo:status-changed')!.size).toBe(0);
+        fire('repo:status-changed', snapshot('/repo/two'));
+        expect(setQueryData).not.toHaveBeenCalled();
     });
 });
