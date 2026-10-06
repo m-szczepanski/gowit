@@ -36,17 +36,23 @@ type emitted struct {
 	data  []interface{}
 }
 
-func newTestApp(t *testing.T) (*App, string, *[]emitted) {
+func newAppBase(t *testing.T) (*App, string) {
 	t.Helper()
 	file := filepath.Join(t.TempDir(), "config.json")
-	events := &[]emitted{}
 	app := &App{
-		open: git.Open,
-		emit: func(_ context.Context, event string, data ...interface{}) {
-			*events = append(*events, emitted{event, data})
-		},
+		open:  git.Open,
 		watch: func(_ string, _ func()) workTreeWatcher { return silentWatcher{} },
 		cfg:   config.NewStore(file, func() time.Time { return testTime }),
+	}
+	return app, file
+}
+
+func newTestApp(t *testing.T) (*App, string, *[]emitted) {
+	t.Helper()
+	app, file := newAppBase(t)
+	events := &[]emitted{}
+	app.emit = func(_ context.Context, event string, data ...interface{}) {
+		*events = append(*events, emitted{event, data})
 	}
 	app.startup(context.Background())
 	return app, file, events
@@ -357,15 +363,10 @@ func (r *recordingWatcher) Stop() error {
 
 func newChannelApp(t *testing.T) (*App, chan emitted) {
 	t.Helper()
-	file := filepath.Join(t.TempDir(), "config.json")
+	app, _ := newAppBase(t)
 	ch := make(chan emitted, 32)
-	app := &App{
-		open: git.Open,
-		emit: func(_ context.Context, event string, data ...interface{}) {
-			ch <- emitted{event: event, data: data}
-		},
-		watch: func(_ string, _ func()) workTreeWatcher { return silentWatcher{} },
-		cfg:   config.NewStore(file, func() time.Time { return testTime }),
+	app.emit = func(_ context.Context, event string, data ...interface{}) {
+		ch <- emitted{event: event, data: data}
 	}
 	app.startup(context.Background())
 	return app, ch
@@ -380,8 +381,8 @@ func waitEvent(t *testing.T, ch chan emitted, name string) emitted {
 			if ev.event == name {
 				return ev
 			}
-			// tolerate the repo:opened preamble; other statuses are bugs
-			if ev.event != "repo:opened" {
+			// tolerate the repo:opened preamble; other events are bugs
+			if ev.event != repoOpenedEvent {
 				t.Fatalf("unexpected event %q while waiting for %q", ev.event, name)
 			}
 		case <-deadline:
@@ -417,7 +418,7 @@ func TestOpenStartsWatcherAndSignalsStatusChanged(t *testing.T) {
 	}
 
 	cb()
-	ev := waitEvent(t, ch, "repo:status-changed")
+	ev := waitEvent(t, ch, statusChangedEvent)
 	if len(ev.data) != 1 {
 		t.Fatalf("payload count = %d, want the StatusResponse", len(ev.data))
 	}
@@ -444,7 +445,7 @@ func TestWatcherSignalEmitsFreshPayloadEndToEnd(t *testing.T) {
 		t.Fatalf("open A: %+v", res)
 	}
 	writeFileForAppTest(t, repoA, "fresh.txt", "x\n")
-	ev := waitEvent(t, ch, "repo:status-changed")
+	ev := waitEvent(t, ch, statusChangedEvent)
 	snap := ev.data[0].(StatusResponse)
 	if snap.Path != resolvedA || len(snap.Files) == 0 || snap.Files[0].Path != "fresh.txt" {
 		t.Fatalf("payload after touching A = %+v", snap)
@@ -456,7 +457,7 @@ func TestWatcherSignalEmitsFreshPayloadEndToEnd(t *testing.T) {
 	drainQuietApp(ch)
 
 	writeFileForAppTest(t, repoB, "b-only.txt", "y\n")
-	ev = waitEvent(t, ch, "repo:status-changed")
+	ev = waitEvent(t, ch, statusChangedEvent)
 	snap = ev.data[0].(StatusResponse)
 	if snap.Path != resolvedB || snap.Files[0].Path != "b-only.txt" {
 		t.Fatalf("payload after touching B = %+v", snap)
@@ -469,6 +470,9 @@ func TestWatcherSignalEmitsFreshPayloadEndToEnd(t *testing.T) {
 	for {
 		select {
 		case ev2 := <-ch:
+			if ev2.event != statusChangedEvent {
+				continue
+			}
 			s2 := ev2.data[0].(StatusResponse)
 			if s2.Path == resolvedA {
 				t.Fatalf("stale watcher fired with A payload: %+v", s2)
@@ -496,7 +500,7 @@ func TestReopenStopsPreviousWatcher(t *testing.T) {
 	second := initRepoForAppTest(t)
 	var watchers []*recordingWatcher
 	app.watch = func(root string, onChange func()) workTreeWatcher {
-		w := &recordingWatcher{root: root, onChange: onChange}
+		w := &recordingWatcher{root: root}
 		watchers = append(watchers, w)
 		return w
 	}
@@ -528,6 +532,41 @@ func TestWatcherStartFailureKeepsOpenValid(t *testing.T) {
 	app.mu.Unlock()
 	if running != nil {
 		t.Fatal("failed watcher must not be stored")
+	}
+}
+
+func TestQueueStatusCollapsesDuplicates(t *testing.T) {
+	app, _ := newAppBase(t)
+	app.signals = make(chan struct{}, 1)
+	app.queueStatus()
+	app.queueStatus()
+	if len(app.signals) != 1 {
+		t.Fatalf("queued = %d, want one coalesced signal", len(app.signals))
+	}
+	<-app.signals
+	app.queueStatus()
+	if len(app.signals) != 1 {
+		t.Fatal("signal after drain was dropped")
+	}
+}
+
+func TestShutdownStopsStatusWorker(t *testing.T) {
+	app, ch := newChannelApp(t)
+	dir := initRepoWithCommit(t)
+	var cb func()
+	app.watch = func(_ string, onChange func()) workTreeWatcher {
+		cb = onChange
+		return silentWatcher{}
+	}
+	app.OpenRepository(dir)
+	waitEvent(t, ch, repoOpenedEvent)
+
+	app.shutdown(context.Background())
+	cb()
+	select {
+	case ev := <-ch:
+		t.Fatalf("worker still emitting after shutdown: %v", ev)
+	case <-time.After(500 * time.Millisecond):
 	}
 }
 

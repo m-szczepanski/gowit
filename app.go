@@ -37,6 +37,9 @@ type App struct {
 	watch      func(root string, onChange func()) workTreeWatcher
 	watcher    workTreeWatcher
 	cfg        *config.Store
+	signals    chan struct{}
+	quit       chan struct{}
+	quitOnce   sync.Once
 }
 
 func NewApp() *App {
@@ -74,11 +77,13 @@ type OpenRepositoryResult struct {
 	Path string `json:"path"`
 }
 
+// Wails event names on the app-to-UI channel.
 const (
-	// statusChangedEvent carries a fresh StatusResponse payload each time the
-	// active repo's watcher settles; the UI adopts it instead of refetching.
-	statusChangedEvent = "repo:status-changed"
+	statusChangedEvent = "repo:status-changed" // payload: fresh StatusResponse
+	repoOpenedEvent    = "repo:opened"         // payload: resolved repo path
+)
 
+const (
 	saveFailedCode = "save_failed"
 	openFailedCode = "open_failed"
 	callFailedCode = "call_failed"
@@ -147,7 +152,7 @@ func (a *App) mutate(op func(*git.Repo) error) StatusResponse {
 		return StatusResponse{CallResult: CallResult{Code: noRepoCode, Message: "no repository open"}}
 	}
 	if err := op(repo); err != nil {
-		return StatusResponse{CallResult: callResult(err, callFailedCode)}
+		return StatusResponse{CallResult: callResult(err, callFailedCode), Path: repo.Path()}
 	}
 	// the echo reports the repo the op actually ran against, even if the
 	// slot was swapped while the call was in flight
@@ -189,30 +194,52 @@ func (a *App) OpenRepository(path string) OpenRepositoryResult {
 	}
 	// recents are best effort: a failed settings write must not undo an open
 	_ = a.cfg.AddRecent(repo.Path())
-	a.emit(a.ctx, "repo:opened", repo.Path())
+	a.emit(a.ctx, repoOpenedEvent, repo.Path())
 	a.restartWatcher(repo.Path())
 	return OpenRepositoryResult{Path: repo.Path()}
 }
 
 // restartWatcher moves directory watching onto path, stopping whatever was
 // running before. Watching is best effort: a failed Start never invalidates
-// the open repository. The onChange closure only spawns emitStatus; calling
-// back into locked App methods from the watcher goroutine would invert the
-// lock order against a concurrent restart.
+// the open repository. onChange only nudges the coalescing signal slot: the
+// watcher goroutine must never call back into locked App methods (a
+// concurrent restart holds a.mu while Stop joins this very loop) and must
+// never start an unbounded read.
 func (a *App) restartWatcher(path string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.stopWatcherLocked()
-	w := a.watch(path, func() { go a.emitStatus() })
+	w := a.watch(path, a.queueStatus)
 	if err := w.Start(a.ctx); err != nil {
 		return
 	}
 	a.watcher = w
 }
 
-// emitStatus runs on a goroutine of its own (see restartWatcher): the
-// watcher loop must stay free so Stop can join it, and the detached emit
-// keeps onChange from locking a.mu while a restart holds it.
+// queueStatus drops the nudge when one is already waiting: a burst that
+// arrives mid-emit collapses into exactly one follow-up read.
+func (a *App) queueStatus() {
+	select {
+	case a.signals <- struct{}{}:
+	default:
+	}
+}
+
+// statusWorker serializes the payload pushes: at most one git status runs
+// at a time, bursts during it collapse into the single queued signal, and
+// the newest read therefore always lands last.
+func (a *App) statusWorker() {
+	for {
+		select {
+		case <-a.quit:
+			return
+		case <-a.signals:
+			a.emitStatus()
+		}
+	}
+}
+
+// emitStatus pushes the current snapshot; runs only on statusWorker.
 func (a *App) emitStatus() {
 	a.emit(a.ctx, statusChangedEvent, a.GetStatus())
 }
@@ -257,12 +284,21 @@ func resolveConfigFile() string {
 	return filepath.Join(dir, "gowit", "config.json")
 }
 
-// startup keeps the Wails context so runtime methods (EventsEmit) work later.
+// startup keeps the Wails context so runtime methods (EventsEmit) work
+// later and runs the status coalescing worker for the app's lifetime.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.signals = make(chan struct{}, 1)
+	a.quit = make(chan struct{})
+	go a.statusWorker()
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	a.quitOnce.Do(func() {
+		if a.quit != nil {
+			close(a.quit)
+		}
+	})
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.stopWatcherLocked()
