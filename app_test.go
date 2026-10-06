@@ -583,3 +583,27 @@ func TestCallResultFallsBackForNonGitErrors(t *testing.T) {
 		t.Fatalf("open fallback = %+v", open)
 	}
 }
+
+func TestDiscardFilesAdapter(t *testing.T) {
+	app, _, _ := newTestApp(t)
+	if res := app.DiscardFiles([]string{"a.txt"}); res.Code != noRepoCode {
+		t.Fatalf("closed = %+v, want no_repo", res)
+	}
+
+	dir := initRepoWithCommit(t)
+	app.OpenRepository(dir)
+	writeFileForAppTest(t, dir, "a.txt", "ruined\n")
+	writeFileForAppTest(t, dir, "scratch.txt", "temp\n")
+
+	res := app.DiscardFiles([]string{"a.txt", "scratch.txt"})
+	if res.Code != "" {
+		t.Fatalf("DiscardFiles = %+v", res)
+	}
+	if len(res.Files) != 0 {
+		t.Fatalf("after discard = %+v, want clean", res.Files)
+	}
+
+	if res := app.DiscardFiles([]string{"nosuch.txt"}); res.Code != string(git.CodeCommandFailed) {
+		t.Fatalf("unknown path = %+v, want command_failed", res)
+	}
+}
