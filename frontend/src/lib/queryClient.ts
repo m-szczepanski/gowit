@@ -13,8 +13,9 @@ import {QueryClient} from '@tanstack/react-query';
  * Cache invalidation strategy (issue #6 convention):
  * 1. User-initiated refresh: call invalidateQueries on the affected key
  *    factory from lib/queryKeys (e.g. queryKeys.status(repoPath)).
- * 2. Repo/file changes detected by the watcher: Wails events are bridged to
- *    invalidations via lib/wailsEvents, never polled by components.
+ * 2. Repo/file changes detected by the watcher: hooks/useStatusEvents adopts
+ *    the pushed StatusResponse payload (invalidate only when it is unusable),
+ *    never polled by components.
  * 3. After any mutating Go call (commit, stage, checkout): the mutation's
  *    own module replaces the affected key with the fresh result the backend
  *    echoes back, and invalidates only when the call failed or an echo is

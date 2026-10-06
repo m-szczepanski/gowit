@@ -15,7 +15,7 @@ type RepoSlot = {repoPath: string | null};
  * it ran against even if the user opened another repo mid-call. On failure
  * the index may be partially changed (StageAll with a bad path aborts per
  * git semantics is not guaranteed), so only error settles invalidate; the
- * watcher's status:changed covers quiet external changes.
+ * repo:status-changed covers quiet external changes.
  */
 function useStatusMutation<TVars>(mutator: (vars: TVars) => Promise<StatusResponse>) {
     const queryClient = useQueryClient();

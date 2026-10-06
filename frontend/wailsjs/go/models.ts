@@ -192,6 +192,7 @@ export namespace main {
 	export class StatusResponse {
 	    code: string;
 	    message: string;
+	    path: string;
 	    branch: git.BranchStatus;
 	    files: git.FileStatus[];
 	
@@ -203,6 +204,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.code = source["code"];
 	        this.message = source["message"];
+	        this.path = source["path"];
 	        this.branch = this.convertValues(source["branch"], git.BranchStatus);
 	        this.files = this.convertValues(source["files"], git.FileStatus);
 	    }
