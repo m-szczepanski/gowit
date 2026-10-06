@@ -1,6 +1,7 @@
 import {useRef, useState} from 'react';
 import {useVirtualizer} from '@tanstack/react-virtual';
 import {Trash2} from 'lucide-react';
+import {toast} from 'sonner';
 import {Badge} from '@/components/ui/badge';
 import {Button} from '@/components/ui/button';
 import {Checkbox} from '@/components/ui/checkbox';
@@ -104,21 +105,27 @@ export function StagingView() {
     // A file in a section is acted on from that section's perspective: the
     // staged row unstages, changes/untracked rows stage. MM files appear in
     // both sections and each row does the opposite job.
+    // failed operations must not sit silent: the cache refetch only fixes
+    // the list, the toast names the reason (ApiError always carries one)
+    const fail = {onError: (e: unknown) => {
+        toast.error((e as Error).message);
+    }};
+
     const toggle = (f: FileStatus, fromSection: SectionKey) => {
         const paths = [f.path];
         if (fromSection === 'staged') {
-            unstageFiles.mutate(paths);
+            unstageFiles.mutate(paths, fail);
         } else {
-            stageFiles.mutate(paths);
+            stageFiles.mutate(paths, fail);
         }
     };
 
     const toggleSection = (section: Section) => {
         const paths = section.files.map((f) => f.path);
         if (section.key === 'staged') {
-            unstageFiles.mutate(paths);
+            unstageFiles.mutate(paths, fail);
         } else {
-            stageFiles.mutate(paths);
+            stageFiles.mutate(paths, fail);
         }
     };
 
@@ -129,10 +136,10 @@ export function StagingView() {
                     {branchText(data)}
                 </span>
                 <div className="flex shrink-0 gap-2">
-                    <Button size="sm" variant="outline" disabled={busy} onClick={() => stageAll.mutate()}>
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => stageAll.mutate(undefined, fail)}>
                         Stage All
                     </Button>
-                    <Button size="sm" variant="outline" disabled={busy} onClick={() => unstageAll.mutate()}>
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => unstageAll.mutate(undefined, fail)}>
                         Unstage All
                     </Button>
                 </div>
@@ -188,7 +195,7 @@ export function StagingView() {
                 busy={discard.isPending}
                 onCancel={() => setDiscardPaths(null)}
                 onConfirm={(list) => {
-                    discard.mutate(list);
+                    discard.mutate(list, fail);
                     setDiscardPaths(null);
                 }}
                 open={discardPaths !== null}

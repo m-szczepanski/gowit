@@ -2,9 +2,14 @@ import {QueryClientProvider} from '@tanstack/react-query';
 import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import type {ReactNode} from 'react';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+import {toast} from 'sonner';
 import {StagingView} from '@/components/StagingView';
 import {createQueryClient} from '@/lib/queryClient';
 import {useRepoStore} from '@/stores/repo';
+
+vi.mock('sonner', () => ({
+    toast: {error: vi.fn()}
+}));
 
 vi.mock('../../wailsjs/go/main/App', () => ({
     GetStatus: vi.fn(),
@@ -292,6 +297,15 @@ describe('StagingView', () => {
         );
         render(<StagingView/>, {wrapper: Wrapper});
         await waitFor(() => expect(screen.getByTestId('staging-error').textContent).toContain('error: bindings not ready'));
+    });
+
+    it('surfaces a failed mutation as a toast', async () => {
+        vi.mocked(await binding('StageFiles')).mockResolvedValue({
+            code: 'command_failed', message: 'pathspec nope did not match', branch: {}, files: []
+        } as never);
+        renderWith(rich.files);
+        fireEvent.click(screen.getByRole('checkbox', {name: 'Stage work.txt'}));
+        await waitFor(() => expect(toast.error).toHaveBeenCalledWith('pathspec nope did not match'));
     });
 
     it('branch indicator updates from the adopted echo', async () => {
