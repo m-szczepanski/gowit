@@ -32,8 +32,9 @@ function displayPath(f: FileStatus): string {
     return f.origPath ? `${f.origPath} -> ${f.path}` : f.path;
 }
 
-// Ignored files are excluded (not returned by Status by default); conflicted
-// rows land in their own section per ARCHITECTURE §8 staging groups.
+// Ignored entries never render as rows (Status omits them unless --ignored
+// is passed, and the UI never requests that); conflicted files get their
+// own read-only section per ARCHITECTURE §8 staging groups.
 function group(files: FileStatus[]): Section[] {
     const sections: Section[] = [
         {key: 'staged', title: 'Staged', files: files.filter((f) => f.staged && !f.conflict)},
@@ -60,7 +61,7 @@ function branchText(res: StatusResponse): string {
 }
 
 export function StagingView() {
-    const {data} = useStatus();
+    const {data, error} = useStatus();
     const stageFiles = useStageFiles();
     const unstageFiles = useUnstageFiles();
     const stageAll = useStageAll();
@@ -88,16 +89,24 @@ export function StagingView() {
         initialRect: {width: 1000, height: 1000}
     });
 
+    if (error) {
+        return (
+            <div data-testid="staging-error" className="p-3 text-sm text-destructive">
+                {`${(error as {code?: string}).code ?? 'error'}: ${error.message}`}
+            </div>
+        );
+    }
+
     if (!data) {
         return <div data-testid="staging-loading" className="p-3 text-sm text-muted-foreground">Loading status…</div>;
     }
 
-    const toggle = (f: FileStatus) => {
-        if (f.conflict) {
-            return;
-        }
+    // A file in a section is acted on from that section's perspective: the
+    // staged row unstages, changes/untracked rows stage. MM files appear in
+    // both sections and each row does the opposite job.
+    const toggle = (f: FileStatus, fromSection: SectionKey) => {
         const paths = [f.path];
-        if (f.staged) {
+        if (fromSection === 'staged') {
             unstageFiles.mutate(paths);
         } else {
             stageFiles.mutate(paths);
@@ -105,9 +114,8 @@ export function StagingView() {
     };
 
     const toggleSection = (section: Section) => {
-        const allStaged = section.files.every((f) => f.staged);
         const paths = section.files.map((f) => f.path);
-        if (allStaged) {
+        if (section.key === 'staged') {
             unstageFiles.mutate(paths);
         } else {
             stageFiles.mutate(paths);
@@ -166,7 +174,7 @@ export function StagingView() {
                                             file={item.file}
                                             section={item.section}
                                             busy={busy}
-                                            onToggle={() => toggle(item.file)}
+                                            onToggle={() => toggle(item.file, item.section)}
                                             onDiscard={() => setDiscardPaths([item.file.path])}
                                         />
                                     )}
@@ -191,7 +199,6 @@ export function StagingView() {
 }
 
 function SectionHeader({section, busy, onToggleAll}: {section: Section; busy: boolean; onToggleAll: () => void}) {
-    const allStaged = section.files.every((f) => f.staged);
     const interactive = section.key !== 'conflicted';
     return (
         <div
@@ -201,10 +208,10 @@ function SectionHeader({section, busy, onToggleAll}: {section: Section; busy: bo
         >
             {interactive ? (
                 <Checkbox
-                    aria-label={`Select all ${section.title}`}
-                    checked={allStaged}
+                    aria-label={`${section.key === 'staged' ? 'Unstage all ' : 'Stage all '}${section.title.toLowerCase()}`}
+                    checked={section.key === 'staged'}
                     disabled={busy}
-                    onCheckedChange={() => onToggleAll()}
+                    onCheckedChange={onToggleAll}
                 />
             ) : (
                 // conflicts need resolve/revert actions from the merge phase
@@ -223,28 +230,19 @@ function FileRow({file, section, busy, onToggle, onDiscard}: {
     onToggle: () => void;
     onDiscard: () => void;
 }) {
-    // Space on the focused row toggles staging. The checkbox carries
-    // tabIndex -1 so keyboard focus always lands here; mouse users click
-    // the checkbox itself.
+    // The checkbox is the row's primary control: natively focusable, so
+    // space/enter toggle it (button activation semantics) without any
+    // hand-rolled row key handling stealing input from the discard button.
     return (
         <div
-            className="flex h-9 items-center gap-2 px-3 hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
+            className="flex h-9 items-center gap-2 px-3 hover:bg-accent"
             data-section={section}
-            data-testid={`row-${file.path}`}
-            onKeyDown={(e) => {
-                if (e.key === ' ') {
-                    e.preventDefault();
-                    onToggle();
-                }
-            }}
-            role="button"
-            tabIndex={0}
+            data-testid={`row-${section}-${file.path}`}
         >
             <Checkbox
-                aria-label={`Stage ${file.path}`}
-                checked={file.staged && !file.conflict}
+                aria-label={`${section === 'staged' ? 'Unstage' : 'Stage'} ${file.path}`}
+                checked={section === 'staged'}
                 disabled={busy || file.conflict}
-                tabIndex={-1}
                 onCheckedChange={onToggle}
             />
             <Badge variant="secondary">{file.xy}</Badge>

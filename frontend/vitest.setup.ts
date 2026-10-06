@@ -1,4 +1,5 @@
 import {vi} from 'vitest';
+import '@testing-library/jest-dom/vitest';
 
 // jsdom has no matchMedia; sonner/next-themes call it on mount.
 Object.defineProperty(window, 'matchMedia', {
@@ -32,8 +33,11 @@ Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
 
 Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
     configurable: true,
-    get() {
-        return 1024;
+    get(this: HTMLElement) {
+        if (this.hasAttribute('data-virtual-scroll') || this.hasAttribute('data-index')) {
+            return 1024;
+        }
+        return 0;
     }
 });
 

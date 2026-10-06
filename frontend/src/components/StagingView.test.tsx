@@ -100,20 +100,20 @@ describe('StagingView', () => {
             ['new.txt', 'untracked'],
             ['both.txt', 'conflicted']
         ] as const) {
-            expect(screen.getByTestId(`row-${path}`).dataset.section).toBe(section);
+            expect(screen.getByTestId(`row-${section}-${path}`).dataset.section).toBe(section);
         }
-        expect(screen.queryByTestId('row-.gitignore')).toBeNull();
+        expect(screen.queryByTestId('row-changes-.gitignore')).toBeNull();
         expect(screen.getByTestId('section-staged').textContent).toContain('Staged');
         expect(screen.getByTestId('section-conflicted').textContent).toContain('1');
     });
 
     it('renders badge, human label and rename display', () => {
         renderWith(rich.files);
-        const row = screen.getByTestId('row-work.txt');
+        const row = screen.getByTestId('row-changes-work.txt');
         expect(row.textContent).toContain('.M');
         expect(row.textContent).toContain('Modified');
-        expect(screen.getByTestId('row-moved.txt').textContent).toContain('old.txt -> moved.txt');
-        expect(screen.getByTestId('row-gone.txt').textContent).toContain('Deleted');
+        expect(screen.getByTestId('row-staged-moved.txt').textContent).toContain('old.txt -> moved.txt');
+        expect(screen.getByTestId('row-changes-gone.txt').textContent).toContain('Deleted');
     });
 
     it('shows the empty state when nothing changed', () => {
@@ -128,7 +128,7 @@ describe('StagingView', () => {
             <QueryClientProvider client={createQueryClient()}>{children}</QueryClientProvider>
         );
         render(<StagingView/>, {wrapper: Wrapper});
-        expect(screen.getByTestId('staging-loading')).toBeTruthy();
+        expect(screen.getByTestId('staging-loading')).toBeInTheDocument();
     });
 
     it('toggles a row through the matching mutation and adopts the echo', async () => {
@@ -139,30 +139,45 @@ describe('StagingView', () => {
 
         expect(await binding('StageFiles')).toHaveBeenCalledWith(['work.txt']);
         await waitFor(() =>
-            expect(screen.getByTestId('row-flipped.txt').dataset.section).toBe('staged')
+            expect(screen.getByTestId('row-staged-flipped.txt').dataset.section).toBe('staged')
         );
     });
 
     it('unstages a checked row', async () => {
         renderWith(rich.files);
         await mockEcho();
-        fireEvent.click(screen.getByRole('checkbox', {name: 'Stage staged.txt'}));
+        fireEvent.click(screen.getByRole('checkbox', {name: 'Unstage staged.txt'}));
         expect(await binding('UnstageFiles')).toHaveBeenCalledWith(['staged.txt']);
     });
 
-    it('toggles with the space key on the focused checkbox', async () => {
+    it('keyboard activation toggles the row checkbox (space and enter)', async () => {
         renderWith(rich.files);
         await mockEcho();
-        fireEvent.keyDown(screen.getByTestId('row-work.txt'), {key: 'Enter'});
-        expect(await binding('StageFiles')).not.toHaveBeenCalled();
-        fireEvent.keyDown(screen.getByTestId('row-work.txt'), {key: ' '});
+        const checkbox = screen.getByRole('checkbox', {name: 'Stage work.txt'});
+        checkbox.focus();
+        // jsdom ships no keyboard activation behaviour for buttons, so the
+        // browser's space-to-click step is performed explicitly; Radix's
+        // own key handling runs for real on top of it
+        checkbox.addEventListener('keyup', (e) => {
+            if (e.key === ' ') {
+                checkbox.click();
+            }
+        });
+        fireEvent.keyDown(checkbox, {key: ' '});
+        fireEvent.keyUp(checkbox, {key: ' '});
         expect(await binding('StageFiles')).toHaveBeenCalledWith(['work.txt']);
+
+        const stagedBox = screen.getByRole('checkbox', {name: 'Unstage staged.txt'});
+        fireEvent.click(stagedBox);
+        expect(await binding('UnstageFiles')).toHaveBeenCalledWith(['staged.txt']);
     });
 
-    it('space on a conflicted row does nothing', async () => {
+    it('conflicted checkboxes are disabled and inert', async () => {
         renderWith(rich.files);
         await mockEcho();
-        fireEvent.keyDown(screen.getByTestId('row-both.txt'), {key: ' '});
+        const conflicted = screen.getByRole('checkbox', {name: 'Stage both.txt'});
+        expect(conflicted).toBeDisabled();
+        fireEvent.click(conflicted);
         expect(await binding('StageFiles')).not.toHaveBeenCalled();
         expect(await binding('UnstageFiles')).not.toHaveBeenCalled();
     });
@@ -175,20 +190,20 @@ describe('StagingView', () => {
     it('section header select-all stages every file of that section', async () => {
         renderWith(rich.files);
         await mockEcho();
-        fireEvent.click(screen.getByRole('checkbox', {name: 'Select all Changes'}));
+        fireEvent.click(screen.getByRole('checkbox', {name: 'Stage all changes'}));
         expect(await binding('StageFiles')).toHaveBeenCalledWith(['work.txt', 'gone.txt']);
     });
 
     it('a fully staged section select-all unstages it', async () => {
         renderWith(rich.files);
         await mockEcho();
-        fireEvent.click(screen.getByRole('checkbox', {name: 'Select all Staged'}));
+        fireEvent.click(screen.getByRole('checkbox', {name: 'Unstage all staged'}));
         expect(await binding('UnstageFiles')).toHaveBeenCalledWith(['staged.txt', 'moved.txt']);
     });
 
     it('conflict section carries no checkbox', () => {
         renderWith(rich.files);
-        expect(screen.getByTestId('section-conflicted-placeholder')).toBeTruthy();
+        expect(screen.getByTestId('section-conflicted-placeholder')).toBeInTheDocument();
     });
 
     it('Stage All and Unstage All call their bindings', async () => {
@@ -243,10 +258,55 @@ describe('StagingView', () => {
         await waitFor(() => expect((screen.getByRole('button', {name: 'Stage All'}) as HTMLButtonElement).disabled).toBe(false));
     });
 
+    it('an MM file appears twice with opposite actions', async () => {
+        const files = [...rich.files, file({path: 'dual.txt', xy: 'MM', staged: true, unstaged: true})];
+        renderWith(files);
+        await mockEcho();
+        const stagedRow = screen.getByTestId('row-staged-dual.txt');
+        const changesRow = screen.getByTestId('row-changes-dual.txt');
+        fireEvent.click(stagedRow.querySelector('button')!);
+        expect(await binding('UnstageFiles')).toHaveBeenCalledWith(['dual.txt']);
+        fireEvent.click(changesRow.querySelector('button')!);
+        expect(await binding('StageFiles')).toHaveBeenCalledWith(['dual.txt']);
+        expect((stagedRow.querySelector('button') as HTMLButtonElement).getAttribute('aria-checked')).toBe('true');
+        expect(changesRow.querySelector('button')!.getAttribute('aria-checked')).toBe('false');
+    });
+
+    it('renders the query error instead of an endless loading state', async () => {
+        vi.mocked(await binding('GetStatus')).mockResolvedValue({
+            code: 'call_failed', message: 'git died', branch: {}, files: []
+        } as never);
+        const client = createQueryClient();
+        const Wrapper = ({children}: {children?: ReactNode}) => (
+            <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        );
+        render(<StagingView/>, {wrapper: Wrapper});
+        await waitFor(() => expect(screen.getByTestId('staging-error').textContent).toContain('call_failed: git died'));
+    });
+
+    it('renders transport failures with a generic code label', async () => {
+        vi.mocked(await binding('GetStatus')).mockRejectedValue(new Error('bindings not ready'));
+        const client = createQueryClient();
+        const Wrapper = ({children}: {children?: ReactNode}) => (
+            <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        );
+        render(<StagingView/>, {wrapper: Wrapper});
+        await waitFor(() => expect(screen.getByTestId('staging-error').textContent).toContain('error: bindings not ready'));
+    });
+
+    it('branch indicator updates from the adopted echo', async () => {
+        renderWith(rich.files, {ahead: 2, behind: 1});
+        vi.mocked(await binding('StageFiles')).mockResolvedValue(
+            status({ahead: 0, behind: 3}, []) as never
+        );
+        fireEvent.click(screen.getByTestId('row-changes-work.txt').querySelector('button')!);
+        await waitFor(() => expect(screen.getByTestId('staging-branch').textContent).toBe('main ↓3'));
+    });
+
     it('virtualizes: renders a window of a large changeset', () => {
         const many = Array.from({length: 500}, (_, i) => file({path: `f${i}.txt`}));
         renderWith(many);
-        expect(screen.getByTestId('row-f0.txt')).toBeTruthy();
-        expect(screen.queryByTestId('row-f499.txt')).toBeNull();
+        expect(screen.getByTestId('row-changes-f0.txt')).toBeInTheDocument();
+        expect(screen.queryByTestId('row-changes-f499.txt')).toBeNull();
     });
 });
