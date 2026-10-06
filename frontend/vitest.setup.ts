@@ -15,6 +15,57 @@ Object.defineProperty(window, 'matchMedia', {
     }))
 });
 
+// jsdom measures every element as 0x0, which leaves react-virtual
+// range-less (it reads offsetWidth/offsetHeight and never resizes). The
+// scroll container of a virtualized list opts into a stub viewport through
+// data-virtual-scroll; everything else keeps jsdom zeros, so row
+// measurement passes fall back to estimateSize as after first layout.
+Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+    configurable: true,
+    get(this: HTMLElement) {
+        if (this.hasAttribute('data-virtual-scroll')) {
+            return 768;
+        }
+        return this.hasAttribute('data-index') ? 36 : 0;
+    }
+});
+
+Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+    configurable: true,
+    get() {
+        return 1024;
+    }
+});
+
+// jsdom has no ResizeObserver; react-virtual would otherwise keep estimate
+// sizes only. This stub reports the same sizes the offset getters expose,
+// synchronously, so measurement never contradicts the estimate.
+globalThis.ResizeObserver = class {
+    private readonly cb: (entries: ResizeObserverEntry[], obs: ResizeObserver) => void;
+
+    constructor(cb: (entries: ResizeObserverEntry[], obs: ResizeObserver) => void) {
+        this.cb = cb;
+    }
+
+    observe(el: Element) {
+        const height = el instanceof HTMLElement ? el.offsetHeight : 0;
+        const width = el instanceof HTMLElement ? el.offsetWidth : 0;
+        this.cb([{
+            target: el,
+            borderBoxSize: [{inlineSize: width, blockSize: height}],
+            contentRect: {width, height} as DOMRectReadOnly,
+            contentBoxSize: null,
+            devicePixelContentBoxSize: null
+        } as unknown as ResizeObserverEntry], this);
+    }
+
+    unobserve() {
+    }
+
+    disconnect() {
+    }
+};
+
 // jsdom lacks the pointer-capture APIs; Radix menus call them on pointerdown.
 Element.prototype.hasPointerCapture = () => false;
 Element.prototype.setPointerCapture = () => {

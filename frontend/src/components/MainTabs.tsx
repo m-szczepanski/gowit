@@ -1,3 +1,4 @@
+import {StagingView} from '@/components/StagingView';
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '@/components/ui/tabs';
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '@/components/ui/resizable';
 import type {PanelId} from '@/stores/ui';
@@ -18,10 +19,8 @@ export function MainTabs() {
                 <TabsTrigger value="history">History</TabsTrigger>
                 <TabsTrigger value="graph">Graph</TabsTrigger>
             </TabsList>
-            <TabsContent value="status" className="min-h-0 overflow-y-auto">
-                <div data-testid="staging-view" className="p-3 text-sm text-muted-foreground">
-                    No staged or unstaged changes
-                </div>
+            <TabsContent value="status" className="min-h-0">
+                <StagingView/>
             </TabsContent>
             <TabsContent value="history" className="flex min-h-0 flex-col">
                 <ResizablePanelGroup direction="vertical" className="min-h-0 flex-1">

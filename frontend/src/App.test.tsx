@@ -10,10 +10,16 @@ vi.mock('../wailsjs/go/main/App', () => ({
     GetSettings: vi.fn(),
     SetSettings: vi.fn(),
     GetRecentRepos: vi.fn(),
-    AddRecentRepo: vi.fn()
+    AddRecentRepo: vi.fn(),
+    GetStatus: vi.fn(),
+    StageFiles: vi.fn(),
+    UnstageFiles: vi.fn(),
+    StageAll: vi.fn(),
+    UnstageAll: vi.fn(),
+    DiscardFiles: vi.fn()
 }));
 
-type BindingName = 'OpenFolder' | 'OpenRepository' | 'GetSettings' | 'SetSettings' | 'GetRecentRepos' | 'AddRecentRepo';
+type BindingName = 'OpenFolder' | 'OpenRepository' | 'GetSettings' | 'SetSettings' | 'GetRecentRepos' | 'AddRecentRepo' | 'GetStatus';
 
 async function binding(name: BindingName) {
     const mod = await import('../wailsjs/go/main/App');
@@ -47,6 +53,12 @@ describe('App shell', () => {
         (await binding('GetSettings')).mockResolvedValue({theme: 'dark'});
         (await binding('GetRecentRepos')).mockResolvedValue([]);
         (await binding('AddRecentRepo')).mockResolvedValue({code: ''});
+        (await binding('GetStatus')).mockResolvedValue({
+            code: '',
+            message: '',
+            branch: {head: 'main', oid: 'abc', detached: false, upstream: '', ahead: 0, behind: 0},
+            files: []
+        } as never);
         (await binding('OpenFolder')).mockResolvedValue({path: ''});
         (await binding('OpenRepository')).mockResolvedValue({code: '', path: '/default/repo'});
     });

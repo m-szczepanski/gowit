@@ -1,4 +1,4 @@
-import {GetStatus, StageAll, StageFiles, UnstageAll, UnstageFiles} from '../../wailsjs/go/main/App';
+import {DiscardFiles, GetStatus, StageAll, StageFiles, UnstageAll, UnstageFiles} from '../../wailsjs/go/main/App';
 import {main} from '../../wailsjs/go/models';
 
 export type StatusResponse = main.StatusResponse;
@@ -44,4 +44,8 @@ export function stageAll(): Promise<StatusResponse> {
 
 export function unstageAll(): Promise<StatusResponse> {
     return UnstageAll().then(unwrapStatus);
+}
+
+export function discardFiles(paths: string[]): Promise<StatusResponse> {
+    return DiscardFiles(paths).then(unwrapStatus);
 }
