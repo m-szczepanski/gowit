@@ -10,10 +10,16 @@ vi.mock('../wailsjs/go/main/App', () => ({
     GetSettings: vi.fn(),
     SetSettings: vi.fn(),
     GetRecentRepos: vi.fn(),
-    AddRecentRepo: vi.fn()
+    AddRecentRepo: vi.fn(),
+    GetStatus: vi.fn(),
+    StageFiles: vi.fn(),
+    UnstageFiles: vi.fn(),
+    StageAll: vi.fn(),
+    UnstageAll: vi.fn(),
+    DiscardFiles: vi.fn()
 }));
 
-type BindingName = 'OpenFolder' | 'OpenRepository' | 'GetSettings' | 'SetSettings' | 'GetRecentRepos' | 'AddRecentRepo';
+type BindingName = 'OpenFolder' | 'OpenRepository' | 'GetSettings' | 'SetSettings' | 'GetRecentRepos' | 'AddRecentRepo' | 'GetStatus';
 
 async function binding(name: BindingName) {
     const mod = await import('../wailsjs/go/main/App');
@@ -47,6 +53,12 @@ describe('App shell', () => {
         (await binding('GetSettings')).mockResolvedValue({theme: 'dark'});
         (await binding('GetRecentRepos')).mockResolvedValue([]);
         (await binding('AddRecentRepo')).mockResolvedValue({code: ''});
+        (await binding('GetStatus')).mockResolvedValue({
+            code: '',
+            message: '',
+            branch: {head: 'main', oid: 'abc', detached: false, upstream: '', ahead: 0, behind: 0},
+            files: []
+        } as never);
         (await binding('OpenFolder')).mockResolvedValue({path: ''});
         (await binding('OpenRepository')).mockResolvedValue({code: '', path: '/default/repo'});
     });
@@ -79,10 +91,10 @@ describe('App shell', () => {
     it('shows the empty state with a call to action when no repo is open', async () => {
         await renderApp();
 
-        expect(screen.getByRole('banner')).toBeTruthy();
-        expect(screen.getByRole('main')).toBeTruthy();
-        expect(screen.getByRole('contentinfo')).toBeTruthy();
-        expect(screen.getByLabelText('Repository panels')).toBeTruthy();
+        expect(screen.getByRole('banner')).toBeInTheDocument();
+        expect(screen.getByRole('main')).toBeInTheDocument();
+        expect(screen.getByRole('contentinfo')).toBeInTheDocument();
+        expect(screen.getByLabelText('Repository panels')).toBeInTheDocument();
         expect(screen.getByTestId('empty-state').textContent).toContain('No repository open');
         expect(screen.getByTestId('status-branch').textContent).toBe('no repository');
         expect(screen.getByTestId('branches-placeholder').textContent).toContain('Open a repository');
@@ -120,7 +132,7 @@ describe('App shell', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Open Folder'}));
 
         expect((await screen.findByTestId('open-error')).textContent).toBe(hint);
-        expect(screen.getByTestId('empty-state')).toBeTruthy();
+        expect(screen.getByTestId('empty-state')).toBeInTheDocument();
         expect(useRepoStore.getState().repoPath).toBeNull();
     });
 
@@ -158,7 +170,7 @@ describe('App shell', () => {
         fireEvent.click(await screen.findByRole('menuitem', {name: 'Browse folders…'}));
 
         await waitFor(() => expect(screen.queryByRole('menuitem')).toBeNull());
-        expect(screen.getByTestId('empty-state')).toBeTruthy();
+        expect(screen.getByTestId('empty-state')).toBeInTheDocument();
         expect(await binding('OpenRepository')).not.toHaveBeenCalled();
     });
 
@@ -189,7 +201,7 @@ describe('App shell', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Open Folder'}));
 
         await waitFor(() => expect(screen.getByTestId('staging-view')).toBeTruthy());
-        expect(screen.getByRole('heading', {name: 'project'})).toBeTruthy();
+        expect(screen.getByRole('heading', {name: 'project'})).toBeInTheDocument();
         expect(screen.getByTestId('branch-indicator').textContent).toBe('no branch info');
         expect(screen.getByTestId('status-branch').textContent).toBe('branch: n/a');
         expect(screen.getByTestId('ahead-behind').textContent).toContain('↑');
@@ -230,7 +242,7 @@ describe('App shell', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Open Folder'}));
 
         await waitFor(() => expect(useRepoStore.getState().repoPath).toBe('/root'));
-        expect(screen.getByRole('heading', {name: 'root'})).toBeTruthy();
+        expect(screen.getByRole('heading', {name: 'root'})).toBeInTheDocument();
     });
 
     it('switches main panel tabs from the ui store', async () => {
@@ -242,7 +254,7 @@ describe('App shell', () => {
         expect(screen.getByTestId('diff-viewer').textContent).toContain('Select a commit');
 
         fireEvent.mouseDown(screen.getByRole('tab', {name: 'Graph'}));
-        expect(screen.getByTestId('commit-graph')).toBeTruthy();
+        expect(screen.getByTestId('commit-graph')).toBeInTheDocument();
         expect(useUiStore.getState().activePanel).toBe('graph');
     });
 
@@ -260,6 +272,6 @@ describe('App shell', () => {
     it('falls back to the raw path when it has no name segment', async () => {
         useRepoStore.getState().openRepo('/');
         await renderApp();
-        expect(screen.getByRole('heading', {name: '/'})).toBeTruthy();
+        expect(screen.getByRole('heading', {name: '/'})).toBeInTheDocument();
     });
 });

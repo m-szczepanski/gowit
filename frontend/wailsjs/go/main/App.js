@@ -6,6 +6,10 @@ export function AddRecentRepo(arg1) {
   return window['go']['main']['App']['AddRecentRepo'](arg1);
 }
 
+export function DiscardFiles(arg1) {
+  return window['go']['main']['App']['DiscardFiles'](arg1);
+}
+
 export function GetRecentRepos() {
   return window['go']['main']['App']['GetRecentRepos']();
 }

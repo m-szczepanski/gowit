@@ -20,7 +20,7 @@ Existing Git clients are either heavy (Electron), closed/paid (GitKraken), or un
 
 ## Features (planned / done)
 
-- [ ] Repository status, staging (interactive add/reset)
+- [x] Repository status, staging (interactive add/reset)
 - [ ] Commit history with a visual branch graph
 - [ ] Diff viewer (side-by-side + inline, syntax highlighting)
 - [ ] Commit, push, pull, fetch

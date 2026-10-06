@@ -128,6 +128,12 @@ func (a *App) UnstageAll() StatusResponse {
 	return a.mutate(func(repo *git.Repo) error { return repo.UnstageAll(a.ctx) })
 }
 
+// DiscardFiles reverts tracked paths and deletes untracked ones; destructive,
+// so the UI must confirm before calling.
+func (a *App) DiscardFiles(paths []string) StatusResponse {
+	return a.mutate(func(repo *git.Repo) error { return repo.DiscardChanges(a.ctx, paths...) })
+}
+
 func (a *App) mutate(op func(*git.Repo) error) StatusResponse {
 	repo := a.currentRepo()
 	if repo == nil {

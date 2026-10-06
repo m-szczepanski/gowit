@@ -1,5 +1,5 @@
 import {useMutation, useQueryClient} from '@tanstack/react-query';
-import {stageAll, stageFiles, type StatusResponse, unstageAll, unstageFiles} from '@/lib/api';
+import {discardFiles, stageAll, stageFiles, type StatusResponse, unstageAll, unstageFiles} from '@/lib/api';
 import {queryKeys} from '@/lib/queryKeys';
 import {useRepoStore} from '@/stores/repo';
 
@@ -56,4 +56,8 @@ export function useStageAll() {
 
 export function useUnstageAll() {
     return useStatusMutation<void>(() => unstageAll());
+}
+
+export function useDiscardFiles() {
+    return useStatusMutation(discardFiles);
 }
