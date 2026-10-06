@@ -7,15 +7,14 @@ import {createQueryClient} from '@/lib/queryClient';
 import {queryKeys} from '@/lib/queryKeys';
 import {useRepoStore} from '@/stores/repo';
 
-vi.mock('@/lib/api', () => ({
-    getStatus: vi.fn(),
-    stageFiles: vi.fn(),
-    unstageFiles: vi.fn(),
-    stageAll: vi.fn(),
-    unstageAll: vi.fn()
+vi.mock('../../wailsjs/go/main/App', () => ({
+    GetStatus: vi.fn()
 }));
 
-import {getStatus} from '@/lib/api';
+async function binding() {
+    const mod = await import('../../wailsjs/go/main/App');
+    return mod.GetStatus as ReturnType<typeof vi.fn>;
+}
 
 function wrapper(client = createQueryClient()) {
     const Inner = ({children}: { children?: ReactNode }) => (
@@ -24,14 +23,16 @@ function wrapper(client = createQueryClient()) {
     return {Wrapper: Inner, client};
 }
 
-const statusPayload = {
+const okPayload = {
+    code: '',
+    message: '',
     branch: {head: 'main', oid: 'abc', detached: false, upstream: '', ahead: 0, behind: 0},
     files: [{xy: '.M', path: 'a.txt', staged: false, unstaged: true, change: 'modified'}]
 };
 
 describe('useStatus', () => {
-    beforeEach(() => {
-        vi.mocked(getStatus).mockReset();
+    beforeEach(async () => {
+        vi.mocked(await binding()).mockReset();
         useRepoStore.getState().closeRepo();
     });
 
@@ -40,11 +41,11 @@ describe('useStatus', () => {
         const {result} = renderHook(() => useStatus(), {wrapper: Wrapper});
 
         await waitFor(() => expect(result.current.isPending).toBe(true));
-        expect(getStatus).not.toHaveBeenCalled();
+        expect(await binding()).not.toHaveBeenCalled();
     });
 
-    it('fetches and keys the cache on the open repo path', async () => {
-        vi.mocked(getStatus).mockResolvedValue(statusPayload as never);
+    it('fetches parsed data and keys the cache on the open repo path', async () => {
+        vi.mocked(await binding()).mockResolvedValue(okPayload as never);
         useRepoStore.getState().openRepo('/repo/one');
         const {Wrapper, client} = wrapper();
 
@@ -55,13 +56,15 @@ describe('useStatus', () => {
         expect(client.getQueryData(queryKeys.status('/repo/one'))).toBeTruthy();
     });
 
-    it('surfaces the typed error without throwing', async () => {
-        vi.mocked(getStatus).mockRejectedValue({code: 'command_failed', message: 'boom'});
+    it('surfaces the typed backend error as query error, not a throw', async () => {
+        vi.mocked(await binding()).mockResolvedValue({
+            code: 'no_repo', message: 'no repository open', branch: {}, files: []
+        } as never);
         useRepoStore.getState().openRepo('/repo/one');
         const {Wrapper} = wrapper();
 
         const {result} = renderHook(() => useStatus(), {wrapper: Wrapper});
         await waitFor(() => expect(result.current.isError).toBe(true));
-        expect((result.current.error as {message: string}).message).toBeTruthy();
+        expect((result.current.error as {code?: string}).code).toBe('no_repo');
     });
 });

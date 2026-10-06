@@ -575,8 +575,11 @@ func TestGetStatusAfterRepoVanished(t *testing.T) {
 }
 
 func TestCallResultFallsBackForNonGitErrors(t *testing.T) {
-	res := callResult(errors.New("boom"))
-	if res.Code != openFailedCode || res.Message != "boom" {
-		t.Fatalf("callResult = %+v, want open_failed passthrough", res)
+	res := callResult(errors.New("boom"), callFailedCode)
+	if res.Code != callFailedCode || res.Message != "boom" {
+		t.Fatalf("callResult = %+v, want call_failed passthrough", res)
+	}
+	if open := callResult(errors.New("spawn"), openFailedCode); open.Code != openFailedCode {
+		t.Fatalf("open fallback = %+v", open)
 	}
 }

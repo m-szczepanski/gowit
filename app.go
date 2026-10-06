@@ -77,6 +77,7 @@ type OpenRepositoryResult struct {
 const (
 	saveFailedCode = "save_failed"
 	openFailedCode = "open_failed"
+	callFailedCode = "call_failed"
 	noRepoCode     = "no_repo"
 )
 
@@ -96,9 +97,13 @@ func (a *App) GetStatus() StatusResponse {
 	if repo == nil {
 		return StatusResponse{CallResult: CallResult{Code: noRepoCode, Message: "no repository open"}}
 	}
+	return a.statusOf(repo)
+}
+
+func (a *App) statusOf(repo *git.Repo) StatusResponse {
 	res, err := repo.Status(a.ctx)
 	if err != nil {
-		return StatusResponse{CallResult: callResult(err)}
+		return StatusResponse{CallResult: callResult(err, callFailedCode)}
 	}
 	return StatusResponse{Branch: res.Branch, Files: res.Files}
 }
@@ -129,9 +134,11 @@ func (a *App) mutate(op func(*git.Repo) error) StatusResponse {
 		return StatusResponse{CallResult: CallResult{Code: noRepoCode, Message: "no repository open"}}
 	}
 	if err := op(repo); err != nil {
-		return StatusResponse{CallResult: callResult(err)}
+		return StatusResponse{CallResult: callResult(err, callFailedCode)}
 	}
-	return a.GetStatus()
+	// the echo reports the repo the op actually ran against, even if the
+	// slot was swapped while the call was in flight
+	return a.statusOf(repo)
 }
 
 func (a *App) currentRepo() *git.Repo {
@@ -140,12 +147,14 @@ func (a *App) currentRepo() *git.Repo {
 	return a.repo
 }
 
-func callResult(err error) CallResult {
+// callResult maps a boundary error to the typed envelope; fallback names
+// the adapter family that swallowed a non-GitError.
+func callResult(err error, fallback string) CallResult {
 	var gitErr *git.GitError
 	if errors.As(err, &gitErr) {
 		return CallResult{Code: string(gitErr.Code), Message: gitErr.Message}
 	}
-	return CallResult{Code: openFailedCode, Message: err.Error()}
+	return CallResult{Code: fallback, Message: err.Error()}
 }
 
 // OpenRepository validates the path with git, binds it as the current repo,
@@ -155,11 +164,7 @@ func callResult(err error) CallResult {
 func (a *App) OpenRepository(path string) OpenRepositoryResult {
 	repo, err := a.open(path)
 	if err != nil {
-		var gitErr *git.GitError
-		if errors.As(err, &gitErr) {
-			return OpenRepositoryResult{CallResult: CallResult{Code: string(gitErr.Code), Message: gitErr.Message}}
-		}
-		return OpenRepositoryResult{CallResult: CallResult{Code: openFailedCode, Message: err.Error()}}
+		return OpenRepositoryResult{CallResult: callResult(err, openFailedCode)}
 	}
 
 	a.mu.Lock()

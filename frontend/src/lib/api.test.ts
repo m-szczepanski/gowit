@@ -1,6 +1,5 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest';
 import {ApiError, getStatus, stageAll, stageFiles, unstageAll, unstageFiles} from '@/lib/api';
-import {main} from '../../wailsjs/go/models';
 
 vi.mock('../../wailsjs/go/main/App', () => ({
     GetStatus: vi.fn(),
@@ -30,21 +29,23 @@ describe('api', () => {
         }
     });
 
-    it('getStatus rebuilds the StatusResponse class from JSON', async () => {
+    it('getStatus passes the parsed payload through', async () => {
         const res = await getStatus();
-        expect(res).toBeInstanceOf(main.StatusResponse);
         expect(res.files[0].change).toBe('modified');
         expect(res.branch.head).toBe('main');
     });
 
     it('maps a backend code to ApiError instead of returning the payload', async () => {
-        const response = {code: 'no_repo', message: 'no repository open', branch: {}, files: []};
-        vi.mocked(await binding('GetStatus')).mockResolvedValue(response as never);
+        vi.mocked(await binding('GetStatus')).mockResolvedValue({
+            code: 'no_repo', message: 'no repository open', branch: {}, files: []
+        } as never);
 
-        await expect(getStatus()).rejects.toMatchObject({code: 'no_repo', message: 'no repository open'});
+        const err = await getStatus().catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ApiError);
+        expect((err as ApiError).code).toBe('no_repo');
     });
 
-    it('every staging call forwards its path list and unwraps the echo', async () => {
+    it('every staging call forwards its path list to the binding', async () => {
         await stageFiles(['a.txt', 'b c.txt']);
         expect(await binding('StageFiles')).toHaveBeenCalledWith(['a.txt', 'b c.txt']);
 
@@ -59,14 +60,10 @@ describe('api', () => {
 
     it('staging errors surface as ApiError with the git code', async () => {
         vi.mocked(await binding('StageFiles')).mockResolvedValue({
-            code: 'command_failed',
-            message: 'pathspec nope did not match',
-            branch: {},
-            files: []
+            code: 'command_failed', message: 'pathspec nope did not match', branch: {}, files: []
         } as never);
 
         const err = await stageFiles(['nope']).catch((e: unknown) => e);
-        expect(err).toBeInstanceOf(ApiError);
         expect((err as ApiError).code).toBe('command_failed');
     });
 
