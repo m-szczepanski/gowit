@@ -88,6 +88,8 @@ describe('useCommit', () => {
         await expect(result.current.mutateAsync({message: 'm'})).rejects.toMatchObject({code: 'commit_rejected'});
         await waitFor(() => expect(result.current.isError).toBe(true));
         expect(invalidate).toHaveBeenCalledWith({queryKey: queryKeys.status('/repo/one')});
+        // a rejected commit can still have changed the index or refs
+        expect(invalidate).toHaveBeenCalledWith({queryKey: queryKeys.logPrefix('/repo/one')});
     });
 
     it('invalidates the repo the commit started against, not the current one', async () => {
