@@ -1,4 +1,4 @@
-import {QueryClientProvider} from '@tanstack/react-query';
+import {QueryClientProvider, useQuery} from '@tanstack/react-query';
 import {renderHook, waitFor} from '@testing-library/react';
 import type {ReactNode} from 'react';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
@@ -48,6 +48,33 @@ describe('useCommit', () => {
         await result.current.mutateAsync({message: 'm'});
 
         expect(invalidate).toHaveBeenCalledWith({queryKey: queryKeys.status('/repo/one')});
+    });
+
+    it('invalidates every cached log page of the captured repo', async () => {
+        vi.mocked(await binding()).mockResolvedValue({code: '', message: ''});
+        const {client, Wrapper} = setup();
+        const pageMain = vi.fn().mockResolvedValue('page main');
+        const pageDefault = vi.fn().mockResolvedValue('page default');
+        const otherRepo = vi.fn().mockResolvedValue('other repo');
+
+        renderHook(
+            () => {
+                useQuery({queryKey: queryKeys.log('/repo/one', {branch: 'main', limit: 50}), queryFn: pageMain});
+                useQuery({queryKey: queryKeys.log('/repo/one'), queryFn: pageDefault});
+                useQuery({queryKey: queryKeys.log('/repo/two', {branch: 'main'}), queryFn: otherRepo});
+            },
+            {wrapper: Wrapper}
+        );
+        await waitFor(() => expect(pageMain).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(pageDefault).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(otherRepo).toHaveBeenCalledTimes(1));
+
+        const {result} = renderHook(() => useCommit(), {wrapper: Wrapper});
+        await result.current.mutateAsync({message: 'feat: x'});
+
+        await waitFor(() => expect(pageMain).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(pageDefault).toHaveBeenCalledTimes(2));
+        expect(otherRepo).toHaveBeenCalledTimes(1);
     });
 
     it('rejects with the structured ApiError and still refreshes', async () => {

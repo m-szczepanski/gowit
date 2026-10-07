@@ -4,11 +4,12 @@ import {queryKeys} from '@/lib/queryKeys';
 import {useRepoStore} from '@/stores/repo';
 
 /**
- * Commit mutation (#21). Success invalidates the status cache: the Go
- * worker also pushes repo:status-changed, and TanStack dedupes the
- * concurrent fetches, so the invalidation is the belt to that suspenders -
- * a commit that races its own watcher stays consistent. History
- * invalidation joins here when the log query lands (#25).
+ * Commit mutation (#21). Settled, success or failure, invalidates the
+ * status cache and every cached history page of the repo the call started
+ * against: a rejected hook can still have changed the index. Status also
+ * arrives via the Go worker's repo:status-changed push, and TanStack
+ * dedupes the overlapping fetches. The log cache has no pusher, so this
+ * invalidation is its only refresher even before #25 adds the query.
  */
 export function useCommit() {
     const queryClient = useQueryClient();
@@ -23,6 +24,7 @@ export function useCommit() {
             const repoPath = ctx?.repoPath;
             if (repoPath) {
                 void queryClient.invalidateQueries({queryKey: queryKeys.status(repoPath)});
+                void queryClient.invalidateQueries({queryKey: queryKeys.logPrefix(repoPath)});
             }
         }
     });
