@@ -166,3 +166,34 @@ func TestBuildGitCmdSetsWorkdirMachineFlagsAndEnv(t *testing.T) {
 		t.Fatalf("env = %d entries, want os.Environ (%d) + 3 defaults", len(cmd.Env), len(os.Environ()))
 	}
 }
+
+// TestBuildGitCmdCarriesAuthEnvironment is the WI2 guarantee of #34:
+// the variables ssh, agents and gpg rely on reach the child untouched,
+// and the appended machine defaults win over user values (exec takes the
+// last occurrence of a duplicate).
+func TestBuildGitCmdCarriesAuthEnvironment(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/auth-test-sock")
+	t.Setenv("SSH_AGENT_PID", "4242")
+	t.Setenv("GPG_TTY", "/dev/ttys001")
+	t.Setenv("GIT_TERMINAL_PROMPT", "1")
+
+	cmd := buildGitCmd(context.Background(), t.TempDir(), "fetch")
+
+	last := map[string]string{}
+	for _, kv := range cmd.Env {
+		key, value, ok := strings.Cut(kv, "=")
+		if ok {
+			last[key] = value
+		}
+	}
+	for key, want := range map[string]string{
+		"SSH_AUTH_SOCK":       "/tmp/auth-test-sock",
+		"SSH_AGENT_PID":       "4242",
+		"GPG_TTY":             "/dev/ttys001",
+		"GIT_TERMINAL_PROMPT": "0",
+	} {
+		if last[key] != want {
+			t.Fatalf("%s = %q, want %q", key, last[key], want)
+		}
+	}
+}
