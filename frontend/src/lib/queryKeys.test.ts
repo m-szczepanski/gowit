@@ -19,6 +19,10 @@ describe('queryKeys', () => {
         ]);
     });
 
+    it('keys the repo-wide log prefix for invalidating every page', () => {
+        expect(queryKeys.logPrefix('/repo')).toEqual(['log', '/repo']);
+    });
+
     it('keys diff by repo path, commit and optional file', () => {
         expect(queryKeys.diff('/repo', 'a1b2c3d')).toEqual(['diff', '/repo', 'a1b2c3d', null]);
         expect(queryKeys.diff('/repo', 'a1b2c3d', 'main.go')).toEqual([

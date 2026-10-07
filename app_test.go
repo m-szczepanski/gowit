@@ -28,6 +28,14 @@ func initRepoForAppTest(t *testing.T) string {
 	if out, err := execGitInit(dir); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
+	// repo-local identity: CI runners have none, and Repo.Commit must not
+	// depend on ambient detection (same pin as internal/git's initRepo)
+	if out, err := exec.Command("git", "-C", dir, "config", "user.email", "t@t").CombinedOutput(); err != nil {
+		t.Fatalf("config email: %v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "config", "user.name", "test").CombinedOutput(); err != nil {
+		t.Fatalf("config name: %v: %s", err, out)
+	}
 	return dir
 }
 
@@ -42,7 +50,10 @@ func newAppBase(t *testing.T) (*App, string) {
 	app := &App{
 		open:  git.Open,
 		watch: func(_ string, _ func()) workTreeWatcher { return silentWatcher{} },
-		cfg:   config.NewStore(file, func() time.Time { return testTime }),
+		committer: func(ctx context.Context, repo *git.Repo, opts git.CommitOptions) error {
+			return repo.Commit(ctx, opts)
+		},
+		cfg: config.NewStore(file, func() time.Time { return testTime }),
 	}
 	return app, file
 }
@@ -345,7 +356,6 @@ func (silentWatcher) Stop() error                 { return nil }
 
 type recordingWatcher struct {
 	root     string
-	onChange func()
 	startErr error
 	started  int
 	stopped  int
@@ -680,7 +690,7 @@ func initRepoWithCommit(t *testing.T) string {
 	if out, err := exec.Command("git", "-C", dir, "add", "a.txt").CombinedOutput(); err != nil {
 		t.Fatalf("add: %v: %s", err, out)
 	}
-	if out, err := exec.Command("git", "-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base").CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", "-C", dir, "commit", "-qm", "base").CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v: %s", err, out)
 	}
 	return dir
@@ -746,5 +756,105 @@ func TestDiscardFilesAdapter(t *testing.T) {
 
 	if res := app.DiscardFiles([]string{"nosuch.txt"}); res.Code != string(git.CodeCommandFailed) {
 		t.Fatalf("unknown path = %+v, want command_failed", res)
+	}
+}
+
+func TestCommitAdapter(t *testing.T) {
+	app, ch := newChannelApp(t)
+	dir := initRepoForAppTest(t)
+	if res := app.Commit("nothing open", false); res.Code != noRepoCode {
+		t.Fatalf("closed repo = %+v, want no_repo", res)
+	}
+	opened := app.OpenRepository(dir)
+	if opened.Code != "" {
+		t.Fatalf("open: %+v", opened)
+	}
+	writeFileForAppTest(t, dir, "a.txt", "content\n")
+	gitRunIn(t, dir, "add", "a.txt")
+
+	if res := app.Commit("", false); res.Code != string(git.CodeValidationFailed) {
+		t.Fatalf("empty message = %+v, want validation_failed", res)
+	}
+	if res := app.Commit("add a", false); res.Code != "" {
+		t.Fatalf("Commit = %+v", res)
+	}
+	if got := gitRunIn(t, dir, "log", "-1", "--format=%s"); got != "add a" {
+		t.Fatalf("subject = %q", got)
+	}
+	// the success nudge reaches the UI as a fresh repo:status-changed;
+	// snap.Path is the Cleaned work-tree root, so compare against the
+	// app's own resolved path: raw git output uses forward slashes and
+	// 8.3 short names on Windows and never matches there
+	sawStatus := false
+	deadline := time.After(3 * time.Second)
+	for !sawStatus {
+		select {
+		case ev := <-ch:
+			if ev.event == statusChangedEvent {
+				snap := ev.data[0].(StatusResponse)
+				if snap.Path == opened.Path && len(snap.Files) == 0 {
+					sawStatus = true
+				}
+			}
+		case <-deadline:
+			t.Fatal("no status event after successful commit")
+		}
+	}
+
+	// amend rewrites HEAD with --no-edit semantics
+	writeFileForAppTest(t, dir, "b.txt", "more\n")
+	gitRunIn(t, dir, "add", "b.txt")
+	if res := app.Commit("", true); res.Code != "" {
+		t.Fatalf("amend = %+v", res)
+	}
+	if got := gitRunIn(t, dir, "log", "-1", "--format=%s"); got != "add a" {
+		t.Fatalf("amended subject = %q, want message kept", got)
+	}
+	files := gitRunIn(t, dir, "show", "--name-only", "--format=", "HEAD")
+	if !strings.Contains(files, "b.txt") {
+		t.Fatalf("amended tree = %q", files)
+	}
+
+	if res := app.Commit("nothing staged", false); res.Code != string(git.CodeNothingToCommit) {
+		t.Fatalf("clean commit = %+v, want nothing_to_commit", res)
+	}
+}
+
+func TestCommitAdapterMapsTypedAndPlainErrors(t *testing.T) {
+	app, _ := newChannelApp(t)
+	dir := initRepoForAppTest(t)
+	app.OpenRepository(dir)
+
+	app.committer = func(_ context.Context, _ *git.Repo, opts git.CommitOptions) error {
+		return &git.GitError{Code: git.CodeCommitRejected, Message: "hook said no", ExitCode: 1}
+	}
+	res := app.Commit("x", false)
+	if res.Code != string(git.CodeCommitRejected) || !strings.Contains(res.Message, "hook said no") {
+		t.Fatalf("rejected = %+v", res)
+	}
+
+	app.committer = func(_ context.Context, _ *git.Repo, _ git.CommitOptions) error {
+		return errors.New("boom")
+	}
+	res = app.Commit("x", false)
+	if res.Code != callFailedCode || res.Message != "boom" {
+		t.Fatalf("plain error = %+v, want call_failed passthrough", res)
+	}
+}
+
+func TestNewAppDefaultCommitSeamUsesRealCommit(t *testing.T) {
+	app := NewApp()
+	dir := initRepoWithCommit(t)
+	writeFileForAppTest(t, dir, "second.txt", "x\n")
+	gitRunIn(t, dir, "add", "second.txt")
+	repo, err := app.open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.committer(context.Background(), repo, git.CommitOptions{Message: "real"}); err != nil {
+		t.Fatalf("default committer: %v", err)
+	}
+	if got := gitRunIn(t, dir, "log", "-1", "--format=%s"); got != "real" {
+		t.Fatalf("subject = %q", got)
 	}
 }

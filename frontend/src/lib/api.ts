@@ -1,4 +1,4 @@
-import {DiscardFiles, GetStatus, StageAll, StageFiles, UnstageAll, UnstageFiles} from '../../wailsjs/go/main/App';
+import {Commit, DiscardFiles, GetStatus, StageAll, StageFiles, UnstageAll, UnstageFiles} from '../../wailsjs/go/main/App';
 import {main} from '../../wailsjs/go/models';
 
 export type StatusResponse = main.StatusResponse;
@@ -19,10 +19,14 @@ export class ApiError extends Error {
  * one error shape. A transport rejection (bindings not ready) passes
  * through as a plain Error.
  */
-function unwrapStatus(res: main.StatusResponse): main.StatusResponse {
+function unwrapCall(res: main.CallResult): void {
     if (res.code) {
         throw new ApiError(res.code, res.message);
     }
+}
+
+function unwrapStatus(res: main.StatusResponse): main.StatusResponse {
+    unwrapCall(res);
     return res;
 }
 
@@ -44,6 +48,15 @@ export function stageAll(): Promise<StatusResponse> {
 
 export function unstageAll(): Promise<StatusResponse> {
     return UnstageAll().then(unwrapStatus);
+}
+
+/**
+ * Commits the staged index. Unlike the staging calls, no status echo comes
+ * back: the status update arrives as a repo:status-changed event instead
+ * (the Go side nudges its status worker after a successful commit).
+ */
+export function commit(message: string, amend = false): Promise<void> {
+    return Commit(message, amend).then(unwrapCall);
 }
 
 export function discardFiles(paths: string[]): Promise<StatusResponse> {

@@ -1,15 +1,16 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import {ApiError, getStatus, stageAll, stageFiles, unstageAll, unstageFiles} from '@/lib/api';
+import {ApiError, commit as commitApi, getStatus, stageAll, stageFiles, unstageAll, unstageFiles} from '@/lib/api';
 
 vi.mock('../../wailsjs/go/main/App', () => ({
     GetStatus: vi.fn(),
+    Commit: vi.fn(),
     StageFiles: vi.fn(),
     UnstageFiles: vi.fn(),
     StageAll: vi.fn(),
     UnstageAll: vi.fn()
 }));
 
-async function binding(name: 'GetStatus' | 'StageFiles' | 'UnstageFiles' | 'StageAll' | 'UnstageAll') {
+async function binding(name: 'GetStatus' | 'StageFiles' | 'UnstageFiles' | 'StageAll' | 'UnstageAll' | 'Commit') {
     const mod = await import('../../wailsjs/go/main/App');
     return mod[name] as ReturnType<typeof vi.fn>;
 }
@@ -65,6 +66,16 @@ describe('api', () => {
 
         const err = await stageFiles(['nope']).catch((e: unknown) => e);
         expect((err as ApiError).code).toBe('command_failed');
+    });
+
+    it('commit forwards args, unwraps the envelope, throws typed errors', async () => {
+        vi.mocked(await binding('Commit')).mockResolvedValue({code: '', message: ''});
+        await expect(commitApi('m', true)).resolves.toBeUndefined();
+        expect(await binding('Commit')).toHaveBeenCalledWith('m', true);
+
+        vi.mocked(await binding('Commit')).mockResolvedValue({code: 'nothing_to_commit', message: 'nothing staged'});
+        const err = await commitApi('m').catch((e: unknown) => e);
+        expect((err as ApiError).code).toBe('nothing_to_commit');
     });
 
     it('transport rejections pass through unchanged', async () => {

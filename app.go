@@ -23,6 +23,10 @@ type workTreeWatcher interface {
 	Stop() error
 }
 
+// commitFunc is the commit seam: bound to #20's Repo.Commit in production,
+// replaced in tests to inject error classes without building hook trees.
+type commitFunc func(ctx context.Context, repo *git.Repo, opts git.CommitOptions) error
+
 // App is a thin bridge between the frontend and internal packages.
 // Business logic lives in internal/*, not here (see docs/ARCHITECTURE.md §4).
 // Wails serves each bound call on its own goroutine, so mu guards the
@@ -35,6 +39,7 @@ type App struct {
 	emit       func(ctx context.Context, event string, data ...interface{})
 	open       func(path string) (*git.Repo, error)
 	watch      func(root string, onChange func()) workTreeWatcher
+	committer  commitFunc
 	watcher    workTreeWatcher
 	cfg        *config.Store
 	signals    chan struct{}
@@ -49,6 +54,9 @@ func NewApp() *App {
 		open:       git.Open,
 		watch: func(root string, onChange func()) workTreeWatcher {
 			return watcher.New(root, onChange, watcher.Options{})
+		},
+		committer: func(ctx context.Context, repo *git.Repo, opts git.CommitOptions) error {
+			return repo.Commit(ctx, opts)
 		},
 		cfg: config.NewStore(resolveConfigFile(), time.Now),
 	}
@@ -77,19 +85,6 @@ type OpenRepositoryResult struct {
 	Path string `json:"path"`
 }
 
-// Wails event names on the app-to-UI channel.
-const (
-	statusChangedEvent = "repo:status-changed" // payload: fresh StatusResponse
-	repoOpenedEvent    = "repo:opened"         // payload: resolved repo path
-)
-
-const (
-	saveFailedCode = "save_failed"
-	openFailedCode = "open_failed"
-	callFailedCode = "call_failed"
-	noRepoCode     = "no_repo"
-)
-
 // StatusResponse is the status read model for the frontend: branch plus
 // classified files, with the typed error envelope. Path identifies the repo
 // the snapshot belongs to, so event consumers can drop payloads that raced
@@ -100,6 +95,20 @@ type StatusResponse struct {
 	Branch git.BranchStatus `json:"branch"`
 	Files  []git.FileStatus `json:"files"`
 }
+
+// Wails event names on the app-to-UI channel.
+const (
+	statusChangedEvent = "repo:status-changed" // payload: fresh StatusResponse
+	repoOpenedEvent    = "repo:opened"         // payload: resolved repo path
+)
+
+const (
+	saveFailedCode   = "save_failed"
+	dialogFailedCode = "dialog_failed"
+	openFailedCode   = "open_failed"
+	callFailedCode   = "call_failed"
+	noRepoCode       = "no_repo"
+)
 
 // GetStatus returns the parsed working-dir state of the open repository.
 // Mutations return the same shape fresh from git, so the UI can replace
@@ -146,6 +155,24 @@ func (a *App) DiscardFiles(paths []string) StatusResponse {
 	return a.mutate(func(repo *git.Repo) error { return repo.DiscardChanges(a.ctx, paths...) })
 }
 
+// Commit writes the staged index. An empty message with amend keeps the
+// previous message; hook rejections and empty-index cases return the
+// structured codes from #20. On success it nudges the status worker, so
+// the UI learns about the new HEAD even if the watcher misses it (a
+// self-targeted write inside the repo can be swallowed by fs event
+// suppression).
+func (a *App) Commit(message string, amend bool) CallResult {
+	repo := a.currentRepo()
+	if repo == nil {
+		return CallResult{Code: noRepoCode, Message: "no repository open"}
+	}
+	if err := a.committer(a.ctx, repo, git.CommitOptions{Message: message, Amend: amend}); err != nil {
+		return callResult(err, callFailedCode)
+	}
+	a.queueStatus()
+	return CallResult{}
+}
+
 func (a *App) mutate(op func(*git.Repo) error) StatusResponse {
 	repo := a.currentRepo()
 	if repo == nil {
@@ -157,6 +184,14 @@ func (a *App) mutate(op func(*git.Repo) error) StatusResponse {
 	// the echo reports the repo the op actually ran against, even if the
 	// slot was swapped while the call was in flight
 	return a.statusOf(repo)
+}
+
+// queueStatus nudges the status worker; a pending nudge collapses.
+func (a *App) queueStatus() {
+	select {
+	case a.signals <- struct{}{}:
+	default:
+	}
 }
 
 func (a *App) currentRepo() *git.Repo {
@@ -173,6 +208,29 @@ func callResult(err error, fallback string) CallResult {
 		return CallResult{Code: string(gitErr.Code), Message: gitErr.Message}
 	}
 	return CallResult{Code: fallback, Message: err.Error()}
+}
+
+// GetSettings returns the persisted user settings (defaults when absent).
+func (a *App) GetSettings() config.Settings {
+	return a.cfg.Settings()
+}
+
+func (a *App) SetSettings(settings config.Settings) CallResult {
+	if err := a.cfg.SetSettings(settings); err != nil {
+		return CallResult{Code: saveFailedCode, Message: err.Error()}
+	}
+	return CallResult{}
+}
+
+func (a *App) GetRecentRepos() []config.RecentRepo {
+	return a.cfg.RecentRepos()
+}
+
+func (a *App) AddRecentRepo(path string) CallResult {
+	if err := a.cfg.AddRecent(path); err != nil {
+		return CallResult{Code: saveFailedCode, Message: err.Error()}
+	}
+	return CallResult{}
 }
 
 // OpenRepository validates the path with git, binds it as the current repo,
@@ -201,10 +259,9 @@ func (a *App) OpenRepository(path string) OpenRepositoryResult {
 
 // restartWatcher moves directory watching onto path, stopping whatever was
 // running before. Watching is best effort: a failed Start never invalidates
-// the open repository. onChange only nudges the coalescing signal slot: the
-// watcher goroutine must never call back into locked App methods (a
-// concurrent restart holds a.mu while Stop joins this very loop) and must
-// never start an unbounded read.
+// the open repository. The onChange closure only nudges the coalescing
+// signal slot; calling back into locked App methods from the watcher
+// goroutine would invert the lock order against a concurrent restart.
 func (a *App) restartWatcher(path string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -214,15 +271,6 @@ func (a *App) restartWatcher(path string) {
 		return
 	}
 	a.watcher = w
-}
-
-// queueStatus drops the nudge when one is already waiting: a burst that
-// arrives mid-emit collapses into exactly one follow-up read.
-func (a *App) queueStatus() {
-	select {
-	case a.signals <- struct{}{}:
-	default:
-	}
 }
 
 // statusWorker serializes the payload pushes: at most one git status runs
@@ -249,29 +297,6 @@ func (a *App) stopWatcherLocked() {
 		_ = a.watcher.Stop()
 		a.watcher = nil
 	}
-}
-
-// GetSettings returns the persisted user settings (defaults when absent).
-func (a *App) GetSettings() config.Settings {
-	return a.cfg.Settings()
-}
-
-func (a *App) SetSettings(settings config.Settings) CallResult {
-	if err := a.cfg.SetSettings(settings); err != nil {
-		return CallResult{Code: saveFailedCode, Message: err.Error()}
-	}
-	return CallResult{}
-}
-
-func (a *App) GetRecentRepos() []config.RecentRepo {
-	return a.cfg.RecentRepos()
-}
-
-func (a *App) AddRecentRepo(path string) CallResult {
-	if err := a.cfg.AddRecent(path); err != nil {
-		return CallResult{Code: saveFailedCode, Message: err.Error()}
-	}
-	return CallResult{}
 }
 
 // resolveConfigFile keeps a usable location when the platform reports no
@@ -309,11 +334,9 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 }
 
-const dialogFailedCode = "dialog_failed"
-
-// OpenFolder shows the native folder picker. Recording and validation are
-// the caller's job (OpenRepository) so a rejected folder never lands in
-// recents.
+// OpenFolder shows the native directory picker. An empty Path with no Code
+// means the user cancelled. Recording and validation are the caller's
+// job (OpenRepository), so a rejected folder never lands in recents.
 func (a *App) OpenFolder() FolderDialogResult {
 	path, err := a.pickFolder(a.ctx)
 	if err != nil {

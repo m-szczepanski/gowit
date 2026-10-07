@@ -6,6 +6,10 @@ export function AddRecentRepo(arg1) {
   return window['go']['main']['App']['AddRecentRepo'](arg1);
 }
 
+export function Commit(arg1, arg2) {
+  return window['go']['main']['App']['Commit'](arg1, arg2);
+}
+
 export function DiscardFiles(arg1) {
   return window['go']['main']['App']['DiscardFiles'](arg1);
 }
