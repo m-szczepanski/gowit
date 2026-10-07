@@ -170,3 +170,58 @@ func TestUpstreamErrors(t *testing.T) {
 		t.Fatalf("err = %v, want timeout", err)
 	}
 }
+
+// trackedRepo: bare origin pushed with -u so main tracks origin/main.
+func trackedRepo(t *testing.T) (dir string) {
+	t.Helper()
+	ctx := context.Background()
+	dir = initRepo(t)
+	writeFile(t, dir, "f.txt", "x\n")
+	commitAll(t, dir, "c")
+	runGit(ctx, dir, "init", "-q", "--bare", "../origin.git")
+	addRemote(t, dir, "origin", "../origin.git")
+	if _, _, err := runGit(ctx, dir, "push", "-q", "-u", "origin", "main"); err != nil {
+		t.Fatalf("push -u: %v", err)
+	}
+	return dir
+}
+
+func TestCapabilities(t *testing.T) {
+	ctx := context.Background()
+
+	tracked, err := openRepo(t, trackedRepo(t)).Capabilities(ctx)
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	if !tracked.CanPush || !tracked.CanPull || tracked.Upstream != "origin/main" || tracked.Reason != "" {
+		t.Fatalf("tracked = %+v, want push/pull enabled on origin/main", tracked)
+	}
+
+	untracked := initRepo(t)
+	writeFile(t, untracked, "f.txt", "x\n")
+	commitAll(t, untracked, "c")
+	addRemote(t, untracked, "origin", "../nowhere.git")
+	got, err := openRepo(t, untracked).Capabilities(ctx)
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	if got.CanPush || got.CanPull || got.Upstream != "" || got.Reason != IssueNoUpstream {
+		t.Fatalf("untracked branch = %+v, want %q", got, IssueNoUpstream)
+	}
+
+	dir := trackedRepo(t)
+	runGit(ctx, dir, "checkout", "-q", "--detach")
+	detached, err := openRepo(t, dir).Capabilities(ctx)
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	if !detached.Detached || detached.CanPush || detached.Reason != IssueDetachedHead {
+		t.Fatalf("detached = %+v, want %q", detached, IssueDetachedHead)
+	}
+
+	kctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := openRepo(t, dir).Capabilities(kctx); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want timeout", err)
+	}
+}

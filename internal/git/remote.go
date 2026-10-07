@@ -101,3 +101,43 @@ func (r *Repo) Upstream(ctx context.Context, branch string) (Upstream, error) {
 	}
 	return up, nil
 }
+
+// CapabilityIssue names why remote operations are unavailable, so the
+// toolbar can explain a disabled state instead of only greying it out.
+type CapabilityIssue string
+
+const (
+	IssueDetachedHead CapabilityIssue = "detached_head"
+	IssueNoUpstream   CapabilityIssue = "no_upstream"
+)
+
+// Capabilities is the toolbar state for the current branch: the
+// porcelain v2 branch block already resolves detached HEAD and the
+// upstream of the checked-out branch, so no extra plumbing is needed.
+type Capabilities struct {
+	Detached bool            `json:"detached"`
+	Upstream string          `json:"upstream,omitempty"`
+	CanPush  bool            `json:"canPush"`
+	CanPull  bool            `json:"canPull"`
+	Reason   CapabilityIssue `json:"reason,omitempty"`
+}
+
+// Capabilities reports whether push/pull make sense right now. A branch
+// with no upstream reports IssueNoUpstream so the UI can offer
+// --set-upstream; a detached HEAD reports IssueDetachedHead.
+func (r *Repo) Capabilities(ctx context.Context) (*Capabilities, error) {
+	st, err := r.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c := &Capabilities{Detached: st.Branch.Detached, Upstream: st.Branch.Upstream}
+	switch {
+	case c.Detached:
+		c.Reason = IssueDetachedHead
+	case c.Upstream == "":
+		c.Reason = IssueNoUpstream
+	default:
+		c.CanPush, c.CanPull = true, true
+	}
+	return c, nil
+}
