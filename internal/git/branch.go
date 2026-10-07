@@ -11,9 +11,9 @@ import (
 type BranchScope int
 
 const (
-	ScopeLocal BranchScope = iota
-	ScopeRemote
-	ScopeAll
+	BranchScopeLocal BranchScope = iota
+	BranchScopeRemote
+	BranchScopeAll
 )
 
 // Branch is one entry of the branch list. Name is display-level: a bare
@@ -41,14 +41,14 @@ const branchFormat = "%(refname)%00%(objectname)%00%(upstream:short)%00%(upstrea
 func (r *Repo) Branches(ctx context.Context, scope BranchScope) ([]Branch, error) {
 	args := []string{"for-each-ref", "--format=" + branchFormat}
 	switch scope {
-	case ScopeLocal:
+	case BranchScopeLocal:
 		args = append(args, "refs/heads")
-	case ScopeRemote:
+	case BranchScopeRemote:
 		args = append(args, "refs/remotes")
-	case ScopeAll:
+	case BranchScopeAll:
 		args = append(args, "refs/heads", "refs/remotes")
 	default:
-		return nil, parseFailed("unknown branch scope")
+		return nil, &GitError{Code: CodeValidationFailed, Message: "unknown branch scope", ExitCode: -1}
 	}
 	out, _, err := runGit(ctx, r.path, args...)
 	if err != nil {
@@ -127,8 +127,9 @@ func parseBranchRecords(out string) ([]Branch, error) {
 	return branches, nil
 }
 
-// parseUpstreamTrack decodes for-each-ref's %(upstream:track): "",
-// "[gone]", "[ahead N]" or "[behind N]".
+// parseUpstreamTrack decodes for-each-ref's %(upstream:track): the empty
+// string (no upstream), "[gone]", "[ahead N]", "[behind N]", or the
+// diverged pair "[ahead N, behind M]".
 func parseUpstreamTrack(track string) (int, int, error) {
 	inner := strings.TrimSuffix(strings.TrimPrefix(track, "["), "]")
 	if inner == "" || inner == "gone" {

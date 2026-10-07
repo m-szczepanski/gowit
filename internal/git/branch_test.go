@@ -72,7 +72,7 @@ func branchesByName(t *testing.T, r *Repo, scope BranchScope) map[string]Branch 
 
 func TestBranchesLocalScope(t *testing.T) {
 	dir := seededBranches(t)
-	got := branchesByName(t, openRepo(t, dir), ScopeLocal)
+	got := branchesByName(t, openRepo(t, dir), BranchScopeLocal)
 
 	wantNames := []string{"feature/a", "gone", "main", "noUp"}
 	if len(got) != len(wantNames) {
@@ -133,7 +133,7 @@ func TestBranchesLocalScope(t *testing.T) {
 
 func TestBranchesRemoteScope(t *testing.T) {
 	dir := seededBranches(t)
-	got := branchesByName(t, openRepo(t, dir), ScopeRemote)
+	got := branchesByName(t, openRepo(t, dir), BranchScopeRemote)
 
 	for _, n := range []string{"origin/main", "origin/feature/a", "origin/solo"} {
 		if _, ok := got[n]; !ok {
@@ -162,12 +162,18 @@ func TestBranchesAllIsSortedUnion(t *testing.T) {
 	ctx := context.Background()
 	dir := seededBranches(t)
 	r := openRepo(t, dir)
-	all, err := r.Branches(ctx, ScopeAll)
+	all, err := r.Branches(ctx, BranchScopeAll)
 	if err != nil {
 		t.Fatal(err)
 	}
-	local, _ := r.Branches(ctx, ScopeLocal)
-	remote, _ := r.Branches(ctx, ScopeRemote)
+	local, err := r.Branches(ctx, BranchScopeLocal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err := r.Branches(ctx, BranchScopeRemote)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(all) != len(local)+len(remote) {
 		t.Fatalf("all=%d, want %d total", len(all), len(local)+len(remote))
 	}
@@ -189,7 +195,7 @@ func TestBranchesCommitterDate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := branchesByName(t, openRepo(t, dir), ScopeLocal)["noUp"]
+	got := branchesByName(t, openRepo(t, dir), BranchScopeLocal)["noUp"]
 	if want := time.Unix(sec, 0).UTC(); !got.CommitterDate.Equal(want) {
 		t.Fatalf("CommitterDate = %v, want %v", got.CommitterDate, want)
 	}
@@ -235,7 +241,7 @@ func TestParseBranchRecordsSubjectWithSpecials(t *testing.T) {
 }
 
 func TestBranchesEmptyRepo(t *testing.T) {
-	list, err := openRepo(t, initRepo(t)).Branches(context.Background(), ScopeAll)
+	list, err := openRepo(t, initRepo(t)).Branches(context.Background(), BranchScopeAll)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +253,7 @@ func TestBranchesEmptyRepo(t *testing.T) {
 func TestBranchesCtxKill(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := openRepo(t, seededBranches(t)).Branches(ctx, ScopeAll); !errors.Is(err, ErrTimeout) {
+	if _, err := openRepo(t, seededBranches(t)).Branches(ctx, BranchScopeAll); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want timeout", err)
 	}
 }
@@ -255,7 +261,7 @@ func TestBranchesCtxKill(t *testing.T) {
 func TestBranchesMarksCurrent(t *testing.T) {
 	dir := seededBranches(t)
 	r := openRepo(t, dir)
-	all, err := r.Branches(context.Background(), ScopeAll)
+	all, err := r.Branches(context.Background(), BranchScopeAll)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +283,7 @@ func TestBranchesDetachedHasNoCurrent(t *testing.T) {
 	dir := seededBranches(t)
 	gitOut(t, dir, "checkout", "-q", "--detach")
 	r := openRepo(t, dir)
-	all, err := r.Branches(context.Background(), ScopeAll)
+	all, err := r.Branches(context.Background(), BranchScopeAll)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,8 +296,8 @@ func TestBranchesDetachedHasNoCurrent(t *testing.T) {
 
 func TestBranchesInvalidScope(t *testing.T) {
 	_, err := openRepo(t, seededBranches(t)).Branches(context.Background(), BranchScope(9))
-	if ge, ok := err.(*GitError); !ok || ge.Code != CodeParseFailed {
-		t.Fatalf("err = %v, want parse_failed", err)
+	if ge, ok := err.(*GitError); !ok || ge.Code != CodeValidationFailed {
+		t.Fatalf("err = %v, want validation_failed", err)
 	}
 }
 
