@@ -290,17 +290,19 @@ func TestDiffWorkingFileRejectsBadPaths(t *testing.T) {
 func TestDiffWorkingFileLiteralGlobChars(t *testing.T) {
 	dir := initRepo(t)
 	writeFile(t, dir, "weird1.txt", "1\n")
-	writeFile(t, dir, "weird*.txt", "2\n")
+	writeFile(t, dir, "weird[1].txt", "2\n")
 	commitAll(t, dir, "base")
 	writeFile(t, dir, "weird1.txt", "one\n")
-	writeFile(t, dir, "weird*.txt", "two\n")
+	writeFile(t, dir, "weird[1].txt", "two\n")
 
-	fd, err := diffWorking(t, dir, "weird*.txt", false)
+	// an unwrapped "weird[1].txt" pathspec is a wildmatch class that
+	// would also match weird1.txt; :(literal) must pin it to the file
+	fd, err := diffWorking(t, dir, "weird[1].txt", false)
 	if err != nil {
 		t.Fatalf("DiffWorkingFile: %v", err)
 	}
-	if fd.NewPath != "weird*.txt" || len(fd.Hunks) != 1 {
-		t.Fatalf("got %+v, want only the literal weird*.txt", fd)
+	if fd.NewPath != "weird[1].txt" || len(fd.Hunks) != 1 {
+		t.Fatalf("got %+v, want only the literal weird[1].txt", fd)
 	}
 }
 
@@ -337,6 +339,7 @@ func mkdir(t *testing.T, dir, name string) {
 }
 
 func TestDiffWorkingFileModeOnlyStaged(t *testing.T) {
+	skipWithoutUnixPerms(t)
 	dir := initRepo(t)
 	writeFile(t, dir, "a.txt", "one\n")
 	commitAll(t, dir, "base")
@@ -616,6 +619,10 @@ func statsByPath(t *testing.T, stats []CommitFileStat, hash string) map[string]C
 
 func TestDiffCommitFiles(t *testing.T) {
 	ctx := context.Background()
+	// chmod and TAB filenames only mean something on Unix; Windows git
+	// ignores the exec bit and the FS rejects the tab char. The parser
+	// seam TestParseNameStatusZ covers tabbed paths on every platform.
+	unix := unixPerms()
 	dir := initRepo(t)
 	writeFile(t, dir, "a.txt", "one\ntwo\n")
 	writeFile(t, dir, "b.txt", "del1\ndel2\n")
@@ -623,18 +630,22 @@ func TestDiffCommitFiles(t *testing.T) {
 	writeFile(t, dir, "r.txt", "rename me content line\nmore lines here\n")
 	writeFile(t, dir, "mode.txt", "m\n")
 	writeFile(t, dir, "old name.txt", "spaced name\n")
-	writeFile(t, dir, "ta\tb.txt", "tabbed name\n")
 	writeFileBytes(t, dir, "mod.bin", []byte{0, 1, 2, 3})
+	if unix {
+		writeFile(t, dir, "ta\tb.txt", "tabbed name\n")
+	}
 	commitAll(t, dir, "base")
 
 	runGit(ctx, dir, "rm", "b.txt")
 	runGit(ctx, dir, "mv", "r.txt", "renamed.txt")
 	runGit(ctx, dir, "mv", "old name.txt", "new name.txt")
-	runGit(ctx, dir, "mv", "ta\tb.txt", "tb.txt")
 	writeFile(t, dir, "a.txt", "ONE\ntwo\n")
 	writeFile(t, dir, "add.txt", "new1\nnew2\n")
-	if err := os.Chmod(filepath.Join(dir, "mode.txt"), 0o755); err != nil {
-		t.Fatal(err)
+	if unix {
+		runGit(ctx, dir, "mv", "ta\tb.txt", "tb.txt")
+		if err := os.Chmod(filepath.Join(dir, "mode.txt"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	writeFileBytes(t, dir, "mod.bin", []byte{0, 9, 8, 7})
 	commitAll(t, dir, "change")
@@ -643,8 +654,12 @@ func TestDiffCommitFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DiffCommitFiles: %v", err)
 	}
-	if len(stats) != 8 {
-		t.Fatalf("got %d entries %+v, want 8", len(stats), stats)
+	want := 6
+	if unix {
+		want = 8
+	}
+	if len(stats) != want {
+		t.Fatalf("got %d entries %+v, want %d", len(stats), stats, want)
 	}
 	m := statsByPath(t, stats, "HEAD")
 
@@ -664,14 +679,16 @@ func TestDiffCommitFiles(t *testing.T) {
 	if s := m["new name.txt"]; s.Change != ChangeRenamed || s.OldPath != "old name.txt" {
 		t.Fatalf("new name.txt = %+v, want rename of old name.txt", s)
 	}
-	if s := m["tb.txt"]; s.Change != ChangeRenamed || s.OldPath != "ta\tb.txt" {
-		t.Fatalf("tb.txt = %+v, want rename of tabbed path untouched by quoting", s)
-	}
-	if s := m["mode.txt"]; s.Change != ChangeModified || s.Added != 0 || s.Deleted != 0 {
-		t.Fatalf("mode.txt = %+v, want modified 0/0", s)
-	}
 	if s := m["mod.bin"]; !s.Binary || s.Added != 0 || s.Deleted != 0 {
 		t.Fatalf("mod.bin = %+v, want binary counts", s)
+	}
+	if unix {
+		if s := m["tb.txt"]; s.Change != ChangeRenamed || s.OldPath != "ta\tb.txt" {
+			t.Fatalf("tb.txt = %+v, want rename of tabbed path untouched by quoting", s)
+		}
+		if s := m["mode.txt"]; s.Change != ChangeModified || s.Added != 0 || s.Deleted != 0 {
+			t.Fatalf("mode.txt = %+v, want modified 0/0", s)
+		}
 	}
 }
 
@@ -730,12 +747,13 @@ func TestDiffCommitFilesValidation(t *testing.T) {
 }
 
 func TestParseNameStatusZ(t *testing.T) {
-	in := strings.Join([]string{"R100", "old name.txt", "new name.txt", "A", "add.txt"}, "\x00") + "\x00"
+	in := strings.Join([]string{"R100", "ta\tb.txt", "new name.txt", "A", "add.txt"}, "\x00") + "\x00"
 	got, err := parseNameStatusZ([]byte(in))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(got) != 2 || got[0].path != "new name.txt" || got[0].oldPath != "old name.txt" ||
+	// NUL framing keeps spaces and TABs in raw paths intact
+	if len(got) != 2 || got[0].path != "new name.txt" || got[0].oldPath != "ta\tb.txt" ||
 		got[0].similarity != 100 || got[0].change != ChangeRenamed ||
 		got[1].path != "add.txt" || got[1].change != ChangeAdded {
 		t.Fatalf("got %+v", got)
@@ -878,6 +896,7 @@ func TestDiffWorkingFilePinsPrefixAndContextConfig(t *testing.T) {
 }
 
 func TestDiffWorkingFileUntrackedExecMode(t *testing.T) {
+	skipWithoutUnixPerms(t)
 	dir := initRepo(t)
 	writeFile(t, dir, "seed.txt", "s\n")
 	commitAll(t, dir, "base")

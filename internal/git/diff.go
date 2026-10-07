@@ -563,10 +563,12 @@ func cleanDiffPath(path string) (string, error) {
 	if path == "" {
 		return "", validation("diff path required")
 	}
-	if filepath.IsAbs(path) {
+	clean := filepath.ToSlash(filepath.Clean(path))
+	// IsAbs is drive-letter based on Windows; a leading slash means the
+	// same thing to git there and would surface as its exit-128 fatal
+	if filepath.IsAbs(path) || strings.HasPrefix(clean, "/") {
 		return "", validation("diff path must be relative to the repository: " + path)
 	}
-	clean := filepath.ToSlash(filepath.Clean(path))
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", validation("diff path must stay inside the repository: " + path)
 	}

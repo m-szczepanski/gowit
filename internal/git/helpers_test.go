@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -77,4 +78,15 @@ func statusByPath(res *StatusResult) map[string]FileStatus {
 		m[f.Path] = f
 	}
 	return m
+}
+
+// unixPerms reports whether the platform maps chmod onto the git exec bit.
+// Windows: core.fileMode is off and Go's Mode() carries no 0111 bits.
+func unixPerms() bool { return runtime.GOOS != "windows" }
+
+func skipWithoutUnixPerms(t *testing.T) {
+	t.Helper()
+	if !unixPerms() {
+		t.Skip("no exec bit on Windows; git ignores chmod there")
+	}
 }
