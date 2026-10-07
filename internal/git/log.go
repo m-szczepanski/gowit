@@ -75,11 +75,20 @@ func parseRefs(decorations string) []Ref {
 // treat it as out of scope.
 const logFormat = "%x1e%H\x1f%h\x1f%P\x1f%an\x1f%ae\x1f%at\x1f%ct\x1f%s\x1f%b\x1f%D"
 
-// LogOptions bounds the listing window. MaxCount and Skip map to
-// git log -n/--skip for virtualized "load more"; zero means "no limit".
+// LogOptions bounds the listing and its history source. MaxCount and Skip
+// map to git log -n/--skip for virtualized "load more"; zero means "no
+// limit". Ref starts the walk at any revision ("" = HEAD). Path restricts
+// the listing to commits touching that one repo-relative file.
+// FirstParent follows only first parents - the history view a merge-based
+// UI shows; All lists every ref (mutually exclusive with the unborn-HEAD
+// guard rather than with Ref).
 type LogOptions struct {
-	MaxCount int `json:"maxCount"`
-	Skip     int `json:"skip"`
+	MaxCount    int    `json:"maxCount"`
+	Skip        int    `json:"skip"`
+	Ref         string `json:"ref"`
+	Path        string `json:"path"`
+	FirstParent bool   `json:"firstParent"`
+	All         bool   `json:"all"`
 }
 
 // Log lists commits newest-first from the current branch. An unborn HEAD
@@ -88,20 +97,51 @@ func (r *Repo) Log(ctx context.Context, opts LogOptions) ([]Commit, error) {
 	if opts.MaxCount < 0 || opts.Skip < 0 {
 		return nil, &GitError{Code: CodeValidationFailed, Message: "log window cannot be negative", ExitCode: -1}
 	}
-	_, _, err := runGit(ctx, r.path, "rev-parse", "--verify", "--quiet", "HEAD")
-	if err != nil {
-		var ge *GitError
-		if errors.As(err, &ge) && ge.Code == CodeCommandFailed && ge.ExitCode == 1 {
-			return []Commit{}, nil
-		}
-		return nil, err
+	// a leading dash would be consumed as an option: argv is verbatim, but
+	// the option boundary still needs the same guard the diff hash takes
+	if strings.HasPrefix(opts.Ref, "-") {
+		return nil, &GitError{Code: CodeValidationFailed, Message: "invalid ref: " + opts.Ref, ExitCode: -1}
 	}
+	path := ""
+	if opts.Path != "" {
+		clean, err := cleanDiffPath(opts.Path)
+		if err != nil {
+			return nil, err
+		}
+		path = clean
+	}
+
+	// the unborn-HEAD probe only describes the default starting point;
+	// explicit refs or --all must reach git itself
+	if opts.Ref == "" && !opts.All {
+		_, _, err := runGit(ctx, r.path, "rev-parse", "--verify", "--quiet", "HEAD")
+		if err != nil {
+			var ge *GitError
+			if errors.As(err, &ge) && ge.Code == CodeCommandFailed && ge.ExitCode == 1 {
+				return []Commit{}, nil
+			}
+			return nil, err
+		}
+	}
+
 	args := []string{"log", "--decorate=short", "--format=" + logFormat}
+	if opts.FirstParent {
+		args = append(args, "--first-parent")
+	}
+	if opts.All {
+		args = append(args, "--all")
+	}
 	if opts.MaxCount > 0 {
 		args = append(args, "-n", strconv.Itoa(opts.MaxCount))
 	}
 	if opts.Skip > 0 {
 		args = append(args, "--skip", strconv.Itoa(opts.Skip))
+	}
+	if opts.Ref != "" {
+		args = append(args, opts.Ref)
+	}
+	if path != "" {
+		args = append(args, "--", ":(literal)"+path)
 	}
 	out, _, err := runGit(ctx, r.path, args...)
 	if err != nil {

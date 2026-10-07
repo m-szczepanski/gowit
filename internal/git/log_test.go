@@ -169,3 +169,82 @@ func subjects(cs []Commit) []string {
 	}
 	return out
 }
+
+func TestLogFilters(t *testing.T) {
+	ctx := context.Background()
+	dir, mergeHash, mainHash, _ := mergeRepo(t)
+	// history: root(base.txt) -> side-add(s.txt) on branch side ->
+	// main-edit(base.txt) on main -> merged (first parent main-edit)
+	repo := openRepo(t, dir)
+
+	ref, err := repo.Log(ctx, LogOptions{Ref: "side"})
+	if err != nil {
+		t.Fatalf("Ref=side: %v", err)
+	}
+	if len(ref) != 2 || ref[0].Subject != "side add" || ref[1].Subject != "root" {
+		t.Fatalf("Ref=side = %+v, want side add, root", subjects(ref))
+	}
+	byHash, err := repo.Log(ctx, LogOptions{Ref: mainHash})
+	if err != nil {
+		t.Fatalf("Ref=hash: %v", err)
+	}
+	if len(byHash) != 2 || byHash[0].Subject != "main edit" {
+		t.Fatalf("Ref=hash = %+v, want main edit, root", subjects(byHash))
+	}
+
+	fp, err := repo.Log(ctx, LogOptions{FirstParent: true})
+	if err != nil {
+		t.Fatalf("FirstParent: %v", err)
+	}
+	if len(fp) != 3 || fp[0].Subject != "merged" || fp[1].Subject != "main edit" || fp[2].Subject != "root" {
+		t.Fatalf("FirstParent = %+v, want merged, main edit, root (side add hidden)", subjects(fp))
+	}
+
+	all, err := repo.Log(ctx, LogOptions{All: true})
+	if err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if len(all) != 4 {
+		t.Fatalf("All = %+v, want all four commits", subjects(all))
+	}
+
+	path, err := repo.Log(ctx, LogOptions{Path: "s.txt"})
+	if err != nil {
+		t.Fatalf("Path=s.txt: %v", err)
+	}
+	if len(path) != 1 || path[0].Subject != "side add" {
+		t.Fatalf("Path=s.txt = %+v, want side add only", subjects(path))
+	}
+
+	comb, err := repo.Log(ctx, LogOptions{Ref: mergeHash, Path: "base.txt", MaxCount: 1})
+	if err != nil {
+		t.Fatalf("combined: %v", err)
+	}
+	if len(comb) != 1 || comb[0].Subject != "main edit" {
+		t.Fatalf("combined = %+v, want main edit only", subjects(comb))
+	}
+}
+
+func TestLogFilterValidation(t *testing.T) {
+	ctx := context.Background()
+	dir, _, _, _ := mergeRepo(t)
+	repo := openRepo(t, dir)
+
+	if _, err := repo.Log(ctx, LogOptions{Ref: "-x"}); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("err = %v, want validation_failed", err)
+	}
+	if _, err := repo.Log(ctx, LogOptions{Path: "../escape"}); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("err = %v, want validation_failed", err)
+	}
+	if _, err := repo.Log(ctx, LogOptions{Path: "/abs"}); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("err = %v, want validation_failed", err)
+	}
+}
+
+func TestLogUnbornWithAllIsEmpty(t *testing.T) {
+	dir := initRepo(t)
+	commits, err := openRepo(t, dir).Log(context.Background(), LogOptions{All: true})
+	if err != nil || len(commits) != 0 {
+		t.Fatalf("got %+v err %v, want empty", commits, err)
+	}
+}
