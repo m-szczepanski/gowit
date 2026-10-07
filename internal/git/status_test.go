@@ -213,12 +213,7 @@ func TestStatusReportsUpstreamAheadAndBehind(t *testing.T) {
 	if out, err := exec.Command("git", "clone", "-q", remote, other).CombinedOutput(); err != nil {
 		t.Fatalf("clone: %v: %s", err, out)
 	}
-	// repo-local identity is not cloned; CI runners have no global one
-	for _, kv := range [][2]string{{"user.email", "t@t"}, {"user.name", "test"}} {
-		if _, _, err := runGit(ctx, other, "config", kv[0], kv[1]); err != nil {
-			t.Fatal(err)
-		}
-	}
+	setGitIdentity(t, other)
 	commitFile(t, other, "c.txt", "c\n", "remote ahead")
 	if _, _, err := runGit(ctx, other, "push", "-q", "origin", "HEAD:main"); err != nil {
 		t.Fatal(err)

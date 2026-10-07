@@ -343,6 +343,7 @@ func TestRemoteTrackingMatrix(t *testing.T) {
 		t.Fatal(err)
 	}
 	work := filepath.Join(seed, "work")
+	setGitIdentity(t, work)
 	repo := openRepo(t, work)
 
 	remotes, err := repo.Remotes(ctx)
