@@ -196,9 +196,16 @@ func TestBranchesCommitterDate(t *testing.T) {
 }
 
 func TestParseBranchRecordsMalformed(t *testing.T) {
+	const oid = "0123456789012345678901234567890123456789"
 	cases := []string{
 		"refs/heads/x\x00abc",
 		"\x00\x00\x00\x00\x00",
+		"refs/heads/a\x00\x00\x00\x00s\x001700000000",
+		"refs/heads/a\x00" + oid + "\x00origin/a\x00[ahead]\x00s\x001700000000",
+		"refs/heads/a\x00" + oid + "\x00origin/a\x00[ahead x]\x00s\x001700000000",
+		"refs/heads/a\x00" + oid + "\x00origin/a\x00[diverged 1]\x00s\x001700000000",
+		"refs/heads/a\x00" + oid + "\x00\x00\x00s\x00not-a-time",
+		"refs/tags/v1\x00" + oid + "\x00\x00\x00tag\x001700000000",
 	}
 	for _, in := range cases {
 		if _, err := parseBranchRecords(in); err == nil {
