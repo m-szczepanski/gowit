@@ -68,3 +68,36 @@ func parseRemoteV(out string) ([]Remote, error) {
 	}
 	return list, nil
 }
+
+// Upstream is the remote branch a local branch tracks. Remote and Branch
+// split Ref at the first slash; a tracked local ref (no remote) leaves
+// Remote empty.
+type Upstream struct {
+	Ref    string `json:"ref"`
+	Remote string `json:"remote"`
+	Branch string `json:"branch"`
+}
+
+// Upstream resolves the tracking ref configured for branch via
+// `git rev-parse --abbrev-ref <branch>@{upstream}`. A branch without an
+// upstream surfaces the typed ErrNoUpstream; an unknown branch surfaces
+// command_failed so callers can tell "not configured" from "no such
+// branch".
+func (r *Repo) Upstream(ctx context.Context, branch string) (Upstream, error) {
+	if branch == "" {
+		return Upstream{}, &GitError{Code: CodeValidationFailed, Message: "branch required", ExitCode: -1}
+	}
+	if err := guardOptionLike(branch, "branch"); err != nil {
+		return Upstream{}, err
+	}
+	out, _, err := runGit(ctx, r.path, "rev-parse", "--abbrev-ref", branch+"@{upstream}")
+	if err != nil {
+		return Upstream{}, err
+	}
+	ref := strings.TrimSpace(string(out))
+	up := Upstream{Ref: ref, Branch: ref}
+	if remote, local, found := strings.Cut(ref, "/"); found {
+		up.Remote, up.Branch = remote, local
+	}
+	return up, nil
+}
