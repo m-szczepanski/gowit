@@ -140,5 +140,5 @@ func newStage(num int, mode, oid string) MergeStage {
 }
 
 func parseError(seg string) error {
-	return &GitError{Code: CodeParseFailed, Message: "malformed porcelain v2 record: " + seg, ExitCode: -1}
+	return parseFailed("malformed porcelain v2 record: " + seg)
 }

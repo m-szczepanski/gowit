@@ -81,6 +81,12 @@ func classify(ctx context.Context, output string, exitCode int) *GitError {
 	return &GitError{Code: code, Message: message, ExitCode: exitCode}
 }
 
+// parseFailed builds the typed error both the porcelain and log-output
+// parsers raise when git's machine formats fail to decode.
+func parseFailed(msg string) error {
+	return &GitError{Code: CodeParseFailed, Message: msg, ExitCode: -1}
+}
+
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		return strings.TrimRight(s[:i], "\r")
