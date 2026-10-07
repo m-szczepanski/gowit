@@ -26,3 +26,19 @@ package git
 // authGuidance is appended to every classified credential failure so the
 // UI names the fix (system setup) instead of only echoing git's raw line.
 const authGuidance = " | gowit stores no credentials: verify your SSH agent (ssh-add -l) or credential helper (git config credential.helper)"
+
+// # GIT_ASKPASS spike (WI4 of #34): deferred, not dropped
+//
+// Shape: git honors GIT_ASKPASS by spawning that executable with the
+// prompt as argv (e.g. "Password for 'https://user@github.com':") and
+// reading the answer from stdout. A gowit shim would therefore be a tiny
+// helper (shipped in build/ or written to a temp dir) that turns each
+// invocation into a runtime event and waits for the UI to reply, so the
+// secret flows user->git, never touching gowit storage.
+//
+// Why not now: the round-trip needs a live event channel with timeout
+// and cancellation, which is exactly what the remote-op runner (#32,
+// feeding #31) is for; a shim without it would deadlock the bound call.
+// Until then GIT_TERMINAL_PROMPT=0 keeps failures fast and
+// CodeAuthFailed points at the system setup. Revisit when wiring #31:
+// set GIT_ASKPASS on the spawned env only for interactive remote ops.
