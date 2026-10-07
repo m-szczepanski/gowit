@@ -302,3 +302,80 @@ func TestCommitChangedFiles(t *testing.T) {
 		t.Fatalf("err = %v, want timeout", err)
 	}
 }
+
+func TestLogMergeOctopusAndEmptyCommits(t *testing.T) {
+	ctx := context.Background()
+	dir := initRepo(t)
+	writeFile(t, dir, "a.txt", "base\n")
+	commitAll(t, dir, "base")
+	baseHash := hashOf(t, dir, "HEAD")
+
+	for i := 1; i <= 3; i++ {
+		runGit(ctx, dir, "checkout", "-qb", fmt.Sprintf("s%d", i), baseHash)
+		writeFile(t, dir, fmt.Sprintf("f%d.txt", i), fmt.Sprint(i)+"\n")
+		commitAll(t, dir, fmt.Sprintf("side %d", i))
+		runGit(ctx, dir, "checkout", "-q", "main")
+	}
+
+	runGit(ctx, dir, "commit", "-q", "--allow-empty", "-m", "empty commit")
+	if _, _, err := runGit(ctx, dir, "merge", "-q", "-m", "two-parent", "s1"); err != nil {
+		t.Fatal(err)
+	}
+	two := hashOf(t, dir, "HEAD")
+	if _, _, err := runGit(ctx, dir, "merge", "-q", "-m", "octopus", "s2", "s3"); err != nil {
+		t.Fatal(err)
+	}
+	octopus := hashOf(t, dir, "HEAD")
+
+	commits, err := openRepo(t, dir).Log(ctx, LogOptions{})
+	if err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+	byHash := map[string]Commit{}
+	for _, c := range commits {
+		byHash[c.Hash] = c
+	}
+
+	var empty *Commit
+	for i := range commits {
+		if commits[i].Subject == "empty commit" {
+			empty = &commits[i]
+		}
+	}
+	if empty == nil {
+		t.Fatal("empty commit missing from log")
+	}
+	if len(empty.ParentHashes) != 1 || empty.ParentHashes[0] != baseHash {
+		t.Fatalf("empty commit parents = %v, want [base]", empty.ParentHashes)
+	}
+
+	twoC := byHash[two]
+	if len(twoC.ParentHashes) != 2 {
+		t.Fatalf("two-parent merge parents = %v", twoC.ParentHashes)
+	}
+	if twoC.ParentHashes[0] == baseHash {
+		t.Fatalf("two-parent first parent = %v, want the pre-merge main tip, not base", twoC.ParentHashes[0])
+	}
+	if twoC.ParentHashes[1] != hashOf(t, dir, "s1") {
+		t.Fatalf("two-parent second parent = %v, want s1", twoC.ParentHashes[1])
+	}
+
+	oc := byHash[octopus]
+	if len(oc.ParentHashes) != 3 || oc.ParentHashes[0] != two ||
+		oc.ParentHashes[1] != hashOf(t, dir, "s2") || oc.ParentHashes[2] != hashOf(t, dir, "s3") {
+		t.Fatalf("octopus parents = %v, want [two, s2, s3]", oc.ParentHashes)
+	}
+
+	fp, err := openRepo(t, dir).Log(ctx, LogOptions{FirstParent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range fp {
+		if strings.HasPrefix(c.Subject, "side ") {
+			t.Fatalf("first-parent log leaked side branch commit %q", c.Subject)
+		}
+	}
+	if len(fp) != 4 {
+		t.Fatalf("first-parent log = %+v, want octopus, two-parent, empty, base", subjects(fp))
+	}
+}
