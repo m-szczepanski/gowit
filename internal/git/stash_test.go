@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"os"
-	"reflect"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -355,6 +355,30 @@ func TestStashApplyUntrackedCollisionIsTyped(t *testing.T) {
 	err := openRepo(t, dir).StashApply(ctx, 0)
 	if !errors.Is(err, ErrStashConflict) {
 		t.Fatalf("err = %v, want stash_conflict for untracked collision", err)
+	}
+}
+
+func TestStashClearRemovesAll(t *testing.T) {
+	ctx := context.Background()
+	dir := stashedRepo(t)
+	r := openRepo(t, dir)
+	mustPush(t, r, StashPushOptions{Message: "one"})
+	writeFile(t, dir, "keep.txt", "two\n")
+	mustPush(t, r, StashPushOptions{Message: "two"})
+
+	if err := r.StashClear(ctx); err != nil {
+		t.Fatalf("StashClear: %v", err)
+	}
+	list, err := r.StashList(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("clear must empty the list, got %+v", list)
+	}
+	// the work stays untouched: only the stash refs die
+	if got := fileContent(t, dir, "a.txt"); got != "base\n" {
+		t.Fatalf("a.txt = %q, clear must not restore anything", got)
 	}
 }
 

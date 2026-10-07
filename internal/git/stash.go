@@ -163,3 +163,11 @@ func stashConflict(err error) error {
 	}
 	return err
 }
+
+// StashClear deletes every stash entry. Destructive without a git-side
+// undo (the commits linger only until gc prunes them), so the UI must
+// confirm before calling.
+func (r *Repo) StashClear(ctx context.Context) error {
+	_, _, err := runGit(ctx, r.path, "stash", "clear")
+	return err
+}
