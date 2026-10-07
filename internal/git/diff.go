@@ -647,6 +647,23 @@ func splitContentLines(data []byte) (lines []string, unterminated bool) {
 	return strings.Split(text, "\n"), unterminated
 }
 
+// CommitChangedFiles lists the paths one commit touched against its first
+// parent (same merge rule as the diff methods), with git status letters
+// and rename scores. It is the cheap single-pass sibling of
+// DiffCommitFiles: Added, Deleted and Binary stay zero because the
+// numstat pass is skipped, covering changed-files lists like #30's that
+// need names but not counts.
+func (r *Repo) CommitChangedFiles(ctx context.Context, hash string) ([]CommitFileStat, error) {
+	if err := checkCommitHash(hash); err != nil {
+		return nil, err
+	}
+	out, err := r.showZ(ctx, hash, "--name-status", "-M")
+	if err != nil {
+		return nil, err
+	}
+	return changedFilesFromStatus(out)
+}
+
 // DiffCommitFiles returns the per-file summary of one commit against its
 // first parent (same merge rule as DiffCommitFile): git status letter,
 // insertions and deletions, with rename detection on (-M). Neither
@@ -711,12 +728,10 @@ func (r *Repo) showZ(ctx context.Context, hash string, flags ...string) ([]byte,
 }
 
 func checkCommitHash(hash string) error {
-	// leading "-" would be swallowed as an option; argv passes verbatim but
-	// the option boundary still needs guarding
-	if hash == "" || strings.HasPrefix(hash, "-") {
+	if hash == "" {
 		return &GitError{Code: CodeValidationFailed, Message: "commit hash required", ExitCode: -1}
 	}
-	return nil
+	return guardOptionLike(hash, "commit hash")
 }
 
 func showCommitDiffArgs(hash string, pre, post []string) []string {

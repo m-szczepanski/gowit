@@ -17,7 +17,7 @@ func TestLogLinearHistory(t *testing.T) {
 	writeFile(t, dir, "f.txt", "x\n")
 	commitAll(t, dir, "first\n\nbody A\nbody B")
 	writeFile(t, dir, "f.txt", "y\n")
-	commitAll(t, dir, "ünïcode ✨ subject")
+	commitAll(t, dir, "ünïcode ✨ subject\n\nzażółta gęśl, jaźń\nbody tail")
 	writeFile(t, dir, "f.txt", "z\n")
 	commitAll(t, dir, "last")
 	runGit(ctx, dir, "tag", "v0.1")
@@ -40,8 +40,8 @@ func TestLogLinearHistory(t *testing.T) {
 	if !strings.HasPrefix(first.Hash, first.ShortHash) || len(first.ShortHash) < 7 || first.ShortHash != first.Hash[:len(first.ShortHash)] {
 		t.Fatalf("short hash %q inconsistent with %q", first.ShortHash, first.Hash)
 	}
-	if middle.Subject != "ünïcode ✨ subject" || middle.Body != "" {
-		t.Fatalf("middle = %+v, want unicode subject, empty body", middle)
+	if middle.Subject != "ünïcode ✨ subject" || middle.Body != "zażółta gęśl, jaźń\nbody tail" {
+		t.Fatalf("middle = %+v, want unicode subject and body", middle)
 	}
 	if latest.Hash != hashOf(t, dir, "HEAD") || len(latest.ParentHashes) != 1 || latest.ParentHashes[0] != middle.Hash {
 		t.Fatalf("latest = %+v, want one parent = middle", latest)
@@ -377,5 +377,58 @@ func TestLogMergeOctopusAndEmptyCommits(t *testing.T) {
 	}
 	if len(fp) != 4 {
 		t.Fatalf("first-parent log = %+v, want octopus, two-parent, empty, base", subjects(fp))
+	}
+}
+
+// TestLogSubjectBodyMatchesGitAtoms takes the expected values from git's
+// own %s/%b atoms over the same commits, an independent view of the same
+// messages, including separators inside the subject line.
+func TestLogSubjectBodyMatchesGitAtoms(t *testing.T) {
+	ctx := context.Background()
+	messages := []string{
+		"plain subject",
+		"subj\n\nmulti\nline body",
+		"a\nb without blank separator",
+		"ünïcode ✨\n\nzażółta gęśl, jaźń",
+		"sep \x1f in subject\n\nbody \x1f tail",
+	}
+	for i, msg := range messages {
+		dir := initRepo(t)
+		msgFile := filepath.Join(dir, "MSG")
+		if err := os.WriteFile(msgFile, []byte(msg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, dir, "f.txt", "x\n")
+		commitAll(t, dir, "seed")
+		writeFile(t, dir, "f.txt", fmt.Sprint(i, "\n"))
+		if _, _, err := runGit(ctx, dir, "add", "f.txt"); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := runGit(ctx, dir, "commit", "-q", "-F", "MSG"); err != nil {
+			t.Fatalf("commit %q: %v", msg, err)
+		}
+
+		commits, err := openRepo(t, dir).Log(ctx, LogOptions{})
+		if err != nil || len(commits) != 2 {
+			t.Fatalf("message %q: commits = %+v err %v", msg, commits, err)
+		}
+		got := commits[0]
+
+		wantSubject, _, err := runGit(ctx, dir, "log", "-1", "--format=%s")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantBody, _, err := runGit(ctx, dir, "log", "-1", "--format=%b")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Subject != strings.TrimSuffix(string(wantSubject), "\n") {
+			t.Fatalf("message %q: subject %q, git says %q", msg, got.Subject, wantSubject)
+		}
+		// git's %b keeps the commit blob's final newline; the parser
+		// intentionally trims trailing newlines from Body
+		if got.Body != strings.TrimRight(string(wantBody), "\n") {
+			t.Fatalf("message %q: body %q, git says %q", msg, got.Body, wantBody)
+		}
 	}
 }

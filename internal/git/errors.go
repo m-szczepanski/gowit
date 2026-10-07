@@ -81,6 +81,16 @@ func classify(ctx context.Context, output string, exitCode int) *GitError {
 	return &GitError{Code: code, Message: message, ExitCode: exitCode}
 }
 
+// guardOptionLike rejects positional values that begin with a dash:
+// runGit passes argv verbatim, but git would still consume such a value
+// as an option before the "--" separator.
+func guardOptionLike(value, label string) error {
+	if strings.HasPrefix(value, "-") {
+		return &GitError{Code: CodeValidationFailed, Message: label + " cannot start with a dash: " + value, ExitCode: -1}
+	}
+	return nil
+}
+
 // parseFailed builds the typed error both the porcelain and log-output
 // parsers raise when git's machine formats fail to decode.
 func parseFailed(msg string) error {

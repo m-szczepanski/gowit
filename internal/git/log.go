@@ -9,17 +9,18 @@ import (
 )
 
 // RefKind classifies a commit decoration as git renders it with
-// --decorate=short.
+// --decorate=full.
 type RefKind string
 
 const (
 	RefHead   RefKind = "head"   // HEAD points here; Name is the branch or "HEAD" when detached
 	RefBranch RefKind = "branch" // local branch at this commit
-	RefRemote RefKind = "remote" // remote-tracking ref (name contains "/")
+	RefRemote RefKind = "remote" // remote-tracking ref (refs/remotes/*)
 	RefTag    RefKind = "tag"    // annotated or lightweight tag
 )
 
-// Ref is one decoration entry attached to a commit.
+// Ref is one decoration entry attached to a commit, named without its
+// refs/ namespace.
 type Ref struct {
 	Kind RefKind `json:"kind"`
 	Name string  `json:"name"`
@@ -27,8 +28,7 @@ type Ref struct {
 
 // Commit is one entry from `git log --format=` output (issue #23).
 // ParentHashes holds zero entries for a root commit, one for a normal
-// commit, two or more for merges. Body is the message below the subject
-// line, already unwrapped by git's %b.
+// commit, two or more for merges. Body is the message below the subject.
 type Commit struct {
 	Hash          string    `json:"hash"`
 	ShortHash     string    `json:"shortHash"`
@@ -42,65 +42,81 @@ type Commit struct {
 	Refs          []Ref     `json:"refs"`
 }
 
-// parseRefs decodes a %D decoration string. git joins entries with ", "
-// and ref names never contain spaces, so a bare comma inside an entry is
-// part of the name.
+// parseRefs decodes a %D decoration string produced by --decorate=full:
+// entries carry their full refs/heads, refs/tags or refs/remotes
+// namespace, which is what keeps a local branch named feature/x from
+// being mistaken for a remote. git joins entries with ", " and ref names
+// contain no spaces, so a bare comma inside an entry is part of the name.
 func parseRefs(decorations string) []Ref {
 	refs := []Ref{}
 	if decorations == "" {
 		return refs
 	}
 	for _, item := range strings.Split(decorations, ", ") {
-		switch {
-		case strings.HasPrefix(item, "tag: "):
-			refs = append(refs, Ref{Kind: RefTag, Name: item[len("tag: "):]})
-		case strings.HasPrefix(item, "HEAD -> "):
-			refs = append(refs, Ref{Kind: RefHead, Name: item[len("HEAD -> "):]})
-		case item == "HEAD":
-			refs = append(refs, Ref{Kind: RefHead, Name: "HEAD"})
-		case strings.Contains(item, "/"):
-			refs = append(refs, Ref{Kind: RefRemote, Name: item})
-		default:
-			refs = append(refs, Ref{Kind: RefBranch, Name: item})
+		if name, ok := strings.CutPrefix(item, "tag: "); ok {
+			refs = append(refs, Ref{Kind: RefTag, Name: trimRefNamespace(name)})
+		} else if head, ok := strings.CutPrefix(item, "HEAD -> "); ok {
+			refs = append(refs, Ref{Kind: RefHead, Name: trimRefNamespace(head)})
+		} else {
+			switch {
+			case item == "HEAD":
+				refs = append(refs, Ref{Kind: RefHead, Name: "HEAD"})
+			case strings.HasPrefix(item, "refs/remotes/"):
+				refs = append(refs, Ref{Kind: RefRemote, Name: trimRefNamespace(item)})
+			default:
+				refs = append(refs, Ref{Kind: RefBranch, Name: trimRefNamespace(item)})
+			}
 		}
 	}
 	return refs
 }
 
-// logFormat frames each commit with \x1e at the record head and \x1f
-// between fields, the conventional gitk/tig machine layout: commit
-// messages may contain newlines - even raw \x1f bytes - and must never be
-// split on them. A \x1e byte committed into a message would break the
-// framing; no % format can survive it and the accepted convention is to
-// treat it as out of scope.
-const logFormat = "%x1e%H\x1f%h\x1f%P\x1f%an\x1f%ae\x1f%at\x1f%ct\x1f%s\x1f%b\x1f%D"
-
-// LogOptions bounds the listing and its history source. MaxCount and Skip
-// map to git log -n/--skip for virtualized "load more"; zero means "no
-// limit". Ref starts the walk at any revision ("" = HEAD). Path restricts
-// the listing to commits touching that one repo-relative file.
-// FirstParent follows only first parents - the history view a merge-based
-// UI shows; All lists every ref (mutually exclusive with the unborn-HEAD
-// guard rather than with Ref).
-type LogOptions struct {
-	MaxCount    int    `json:"maxCount"`
-	Skip        int    `json:"skip"`
-	Ref         string `json:"ref"`
-	Path        string `json:"path"`
-	FirstParent bool   `json:"firstParent"`
-	All         bool   `json:"all"`
+// trimRefNamespace drops whichever refs/ namespace git attached under
+// --decorate=full, keeping the bare name a renderer displays. Unknown
+// namespaces (refs/stash, refs/notes) keep their full name.
+func trimRefNamespace(name string) string {
+	for _, ns := range []string{"refs/heads/", "refs/tags/", "refs/remotes/"} {
+		if trimmed, ok := strings.CutPrefix(name, ns); ok {
+			return trimmed
+		}
+	}
+	return name
 }
 
-// Log lists commits newest-first from the current branch. An unborn HEAD
-// yields an empty list rather than git's fatal.
+// logFormat frames one commit per record: \x1e opens the record, \x1f
+// separates fields. Commit messages are raw %B, which may contain
+// newlines and even \x1f bytes, so the message and the decoration field
+// are split at the LAST separator, the only field ref names cannot
+// contain one of. Two residual limits are accepted, same convention as
+// gitk/tig: a \x1e byte inside a message breaks record framing, and a
+// \x1f byte inside an author name or email shifts fields; both are
+// pathological input to config-controlled identity strings.
+const logFormat = "%x1e%H\x1f%h\x1f%P\x1f%at\x1f%ct\x1f%an\x1f%ae\x1f%B\x1f%D"
+
+// LogOptions bounds the listing and its history source. MaxCount and Skip
+// map to git log -n/--skip for virtualized "load more"; zero means no
+// limit. Ref starts the walk at any revision, empty means HEAD. Path
+// restricts the listing to commits touching that one repository-relative
+// file. FirstParent follows only first parents, the history view a
+// merge-based UI shows. All lists every ref. Ref and All make the
+// unborn-HEAD probe inapplicable because their starting point is not HEAD.
+type LogOptions struct {
+	MaxCount    int
+	Skip        int
+	Ref         string
+	Path        string
+	FirstParent bool
+	All         bool
+}
+
+// Log lists commits newest-first. An unborn HEAD yields an empty list
+// rather than git's fatal.
 func (r *Repo) Log(ctx context.Context, opts LogOptions) ([]Commit, error) {
 	if opts.MaxCount < 0 || opts.Skip < 0 {
 		return nil, &GitError{Code: CodeValidationFailed, Message: "log window cannot be negative", ExitCode: -1}
 	}
-	// a leading dash would be consumed as an option: argv is verbatim, but
-	// the option boundary still needs the same guard the diff hash takes
-	if strings.HasPrefix(opts.Ref, "-") {
-		return nil, &GitError{Code: CodeValidationFailed, Message: "invalid ref: " + opts.Ref, ExitCode: -1}
+	if err := guardOptionLike(opts.Ref, "ref"); err != nil {
+		return nil, err
 	}
 	path := ""
 	if opts.Path != "" {
@@ -124,7 +140,7 @@ func (r *Repo) Log(ctx context.Context, opts LogOptions) ([]Commit, error) {
 		}
 	}
 
-	args := []string{"log", "--decorate=short", "--format=" + logFormat}
+	args := []string{"log", "--decorate=full", "--format=" + logFormat}
 	if opts.FirstParent {
 		args = append(args, "--first-parent")
 	}
@@ -165,43 +181,52 @@ func parseLogOutput(out []byte) ([]Commit, error) {
 
 func parseLogRecord(record string) (Commit, error) {
 	record = strings.TrimSuffix(record, "\n")
-	fields := strings.SplitN(record, "\x1f", 9)
-	if len(fields) != 9 {
+	fields := strings.SplitN(record, "\x1f", 8)
+	if len(fields) != 8 {
 		return Commit{}, parseFailed("malformed log record: " + clip(record))
 	}
-	// body may carry \x1f bytes, decorations never can, so the last
-	// separator marks the body/decoration boundary
-	i := strings.LastIndexByte(fields[8], '\x1f')
+	i := strings.LastIndexByte(fields[7], '\x1f')
 	if i < 0 {
 		return Commit{}, parseFailed("log record without decoration boundary: " + clip(record))
 	}
-	body := strings.TrimSuffix(fields[8][:i], "\n")
-	decoration := fields[8][i+1:]
+	subject, body := deriveMessage(fields[7][:i])
+	decoration := fields[7][i+1:]
 
-	authorSec, err := strconv.ParseInt(fields[5], 10, 64)
+	authorSec, err := strconv.ParseInt(fields[3], 10, 64)
 	if err != nil {
 		return Commit{}, parseFailed("malformed author epoch in record for " + fields[0])
 	}
-	commitSec, err := strconv.ParseInt(fields[6], 10, 64)
+	commitSec, err := strconv.ParseInt(fields[4], 10, 64)
 	if err != nil {
 		return Commit{}, parseFailed("malformed committer epoch in record for " + fields[0])
 	}
 
-	// strings.Fields already yields an empty non-nil slice for a root
-	// commit, so %P can be used directly
-	parents := strings.Fields(fields[2])
 	return Commit{
 		Hash:          fields[0],
 		ShortHash:     fields[1],
-		ParentHashes:  parents,
-		AuthorName:    fields[3],
-		AuthorEmail:   fields[4],
+		ParentHashes:  strings.Fields(fields[2]),
+		AuthorName:    fields[5],
+		AuthorEmail:   fields[6],
 		AuthorDate:    time.Unix(authorSec, 0).UTC(),
 		CommitterDate: time.Unix(commitSec, 0).UTC(),
-		Subject:       fields[7],
+		Subject:       subject,
 		Body:          body,
 		Refs:          parseRefs(decoration),
 	}, nil
+}
+
+// deriveMessage splits git's raw %B the way git derives %s and %b: the
+// subject is the first paragraph with its lines space-joined (a message
+// without a blank separator line is all subject), the body is what
+// follows the first blank line, minus the trailing newline every commit
+// object carries.
+func deriveMessage(message string) (subject, body string) {
+	message = strings.TrimSuffix(message, "\n")
+	first, rest := message, ""
+	if i := strings.Index(message, "\n\n"); i >= 0 {
+		first, rest = message[:i], strings.TrimSuffix(message[i+2:], "\n")
+	}
+	return strings.Join(strings.Split(first, "\n"), " "), rest
 }
 
 // clip truncates a record for error text so a megabyte commit message
@@ -212,20 +237,4 @@ func clip(s string) string {
 		return s
 	}
 	return s[:n] + "..."
-}
-
-// CommitChangedFiles lists the paths one commit touched against its first
-// parent (same merge rule as the diff methods), with git status letters
-// and rename scores. Cheap single-pass sibling of DiffCommitFiles:
-// Added/Deleted/Binary stay zero because the numstat pass is skipped -
-// the changed-files list (#30) needs names, not counts.
-func (r *Repo) CommitChangedFiles(ctx context.Context, hash string) ([]CommitFileStat, error) {
-	if err := checkCommitHash(hash); err != nil {
-		return nil, err
-	}
-	out, err := r.showZ(ctx, hash, "--name-status", "-M")
-	if err != nil {
-		return nil, err
-	}
-	return changedFilesFromStatus(out)
 }

@@ -9,9 +9,14 @@ import (
 	"time"
 )
 
+func logRec(fields ...string) string {
+	return "\x1e" + strings.Join(fields, "\x1f") + "\n"
+}
+
 // Decoration fixtures are the exact %D strings observed under
-// `git log --decorate=short` (issue #23), including the "HEAD -> branch",
-// detached "HEAD, branch" and "tag: name" grammars.
+// `git log --decorate=full` (issue #23). Full refnames are the point:
+// --decorate=short renders the local branch feature/x exactly like a
+// remote, which the head/branch/remote/tag classification must not do.
 
 func TestParseRefs(t *testing.T) {
 	cases := []struct {
@@ -19,15 +24,15 @@ func TestParseRefs(t *testing.T) {
 		want []Ref
 	}{
 		{"", []Ref{}},
-		{"HEAD -> main", []Ref{{Kind: RefHead, Name: "main"}}},
-		{"HEAD, main", []Ref{{Kind: RefHead, Name: "HEAD"}, {Kind: RefBranch, Name: "main"}}},
-		{"tag: v1.0, tag: annotated, feat", []Ref{
+		{"HEAD -> refs/heads/main", []Ref{{Kind: RefHead, Name: "main"}}},
+		{"HEAD, refs/heads/main", []Ref{{Kind: RefHead, Name: "HEAD"}, {Kind: RefBranch, Name: "main"}}},
+		{"tag: refs/tags/v1.0, tag: refs/tags/annone, refs/heads/feature/with-slash", []Ref{
 			{Kind: RefTag, Name: "v1.0"},
-			{Kind: RefTag, Name: "annotated"},
-			{Kind: RefBranch, Name: "feat"},
+			{Kind: RefTag, Name: "annone"},
+			{Kind: RefBranch, Name: "feature/with-slash"},
 		}},
-		{"origin/main", []Ref{{Kind: RefRemote, Name: "origin/main"}}},
-		{"HEAD -> main, origin/main, origin/HEAD, tag: v0.1", []Ref{
+		{"refs/remotes/origin/main", []Ref{{Kind: RefRemote, Name: "origin/main"}}},
+		{"HEAD -> refs/heads/main, refs/remotes/origin/main, refs/remotes/origin/HEAD, tag: refs/tags/v0.1", []Ref{
 			{Kind: RefHead, Name: "main"},
 			{Kind: RefRemote, Name: "origin/main"},
 			{Kind: RefRemote, Name: "origin/HEAD"},
@@ -35,7 +40,10 @@ func TestParseRefs(t *testing.T) {
 		}},
 		// comma inside a ref name survives: names contain no spaces, so
 		// only ", " separates decorations
-		{"tag: an,tag", []Ref{{Kind: RefTag, Name: "an,tag"}}},
+		{"tag: refs/tags/an,tag", []Ref{{Kind: RefTag, Name: "an,tag"}}},
+		// unknown namespaces keep their full name; git decorates every tag
+		// entry with the "tag: " label, so a bare refs/tags never appears
+		{"refs/stash", []Ref{{Kind: RefBranch, Name: "refs/stash"}}},
 	}
 	for _, tc := range cases {
 		got := parseRefs(tc.in)
@@ -45,18 +53,14 @@ func TestParseRefs(t *testing.T) {
 	}
 }
 
-func logRec(fields ...string) string {
-	return "\x1e" + strings.Join(fields, "\x1f") + "\n"
-}
-
 func TestParseLogOutput(t *testing.T) {
 	root := logRec(
-		"aaa111", "aaa", "", "Test User", "t@t", "1700000000", "1700000100",
-		"initial commit", "body line one\nbody line two\n", "HEAD -> main",
+		"aaa111", "aaa", "", "1700000000", "1700000100", "Test User", "t@t",
+		"initial commit\n\nbody line one\nbody line two\n", "HEAD -> refs/heads/main",
 	)
 	second := logRec(
-		"bbb222", "bbb", "aaa111", "Test User", "t@t", "1700000200", "1700000200",
-		"second commit", "", "tag: v1.0, origin/main",
+		"bbb222", "bbb", "aaa111", "1700000200", "1700000200", "Test User", "t@t",
+		"second commit\n", "tag: refs/tags/v1.0, refs/remotes/origin/main",
 	)
 	got, err := parseLogOutput([]byte(root + second))
 	if err != nil {
@@ -65,7 +69,8 @@ func TestParseLogOutput(t *testing.T) {
 	want := []Commit{
 		{
 			Hash: "aaa111", ShortHash: "aaa", ParentHashes: []string{},
-			AuthorName: "Test User", AuthorEmail: "t@t",
+			AuthorName:    "Test User",
+			AuthorEmail:   "t@t",
 			AuthorDate:    time.Unix(1700000000, 0).UTC(),
 			CommitterDate: time.Unix(1700000100, 0).UTC(),
 			Subject:       "initial commit",
@@ -74,7 +79,8 @@ func TestParseLogOutput(t *testing.T) {
 		},
 		{
 			Hash: "bbb222", ShortHash: "bbb", ParentHashes: []string{"aaa111"},
-			AuthorName: "Test User", AuthorEmail: "t@t",
+			AuthorName:    "Test User",
+			AuthorEmail:   "t@t",
 			AuthorDate:    time.Unix(1700000200, 0).UTC(),
 			CommitterDate: time.Unix(1700000200, 0).UTC(),
 			Subject:       "second commit",
@@ -91,10 +97,10 @@ func TestParseLogOutput(t *testing.T) {
 }
 
 func TestParseLogOutputBodyWithSeparatorBytes(t *testing.T) {
-	// \x1f can be committed in a message verbatim; the record is framed so
-	// the decoration field (which can never contain \x1f) is split from
-	// the right, keeping the body intact
-	rec := logRec("c1", "c", "", "An", "ae", "1", "2", "subj", "weird \x1f body \x1f\n", "main")
+	// \x1f can be committed in a message verbatim; the whole message is
+	// one trailing field and the decoration (which can never contain
+	// \x1f) is split from the right, so both survive
+	rec := logRec("c1", "c", "", "1", "2", "An", "ae", "subj\n\nweird \x1f body \x1f\n", "refs/heads/main")
 	got, err := parseLogOutput([]byte(rec))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -107,12 +113,25 @@ func TestParseLogOutputBodyWithSeparatorBytes(t *testing.T) {
 	}
 }
 
+func TestParseLogOutputSubjectWithSeparatorBytes(t *testing.T) {
+	// the acceptance "weird delimiters" case for subjects: a raw \x1f in
+	// the subject line must not shift it into the body
+	rec := logRec("c1", "c", "", "1", "2", "An", "ae", "sep \x1f in subject\n\nbody tail\n", "refs/heads/main")
+	got, err := parseLogOutput([]byte(rec))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got[0].Subject != "sep \x1f in subject" || got[0].Body != "body tail" {
+		t.Fatalf("got subject %q body %q, want the raw message split at the blank line", got[0].Subject, got[0].Body)
+	}
+}
+
 func TestParseLogOutputMalformed(t *testing.T) {
 	cases := map[string]string{
 		"too few fields":        "\x1ec1\x1fshort\x1fbody\n",
-		"missing refs boundary": "\x1ec1\x1fch\x1f\x1fan\x1fae\x1f1\x1f2\x1fs\x1fbody-without-sep",
-		"bad epoch":             logRec("c1", "c", "", "An", "ae", "not-a-number", "2", "s", "", ""),
-		"bad committer epoch":   logRec("c1", "c", "", "An", "ae", "1", "x", "s", "", ""),
+		"missing deco boundary": "\x1ec1\x1fch\x1f\x1f1\x1f2\x1fan\x1fae\x1fnodeco",
+		"bad epoch":             logRec("c1", "c", "", "not-a-number", "2", "An", "ae", "s\n", ""),
+		"bad committer epoch":   logRec("c1", "c", "", "1", "x", "An", "ae", "s\n", ""),
 		"huge malformed record": "\x1e" + strings.Repeat("z", 300) + "\n",
 	}
 	for name, in := range cases {
@@ -130,8 +149,8 @@ func TestParseLogOutputEmpty(t *testing.T) {
 }
 
 // TestParseLogOutputFixtures round-trips issue #23's acceptance case:
-// testdata/log_linear.log and log_merges.log captured verbatim from
-// `git log --decorate=short --format=<logFormat>` over real repos (tag +
+// testdata/log_linear.txt and log_merges.txt captured verbatim from
+// `git log --decorate=full --format=<logFormat>` over real repos (tag +
 // fake origin ref for decorations, unicode multi-line body, merge,
 // octopus and empty commits). Expectations are hand-transcribed from the
 // fixture bytes.
@@ -140,7 +159,7 @@ func TestParseLogOutputFixtures(t *testing.T) {
 		file string
 		want []Commit
 	}{
-		{"log_linear.log", []Commit{
+		{"log_linear.txt", []Commit{
 			{
 				Hash: "3b94f0f874a7a79b3d1fdbc3ba540f8ee83854db", ShortHash: "3b94f0f",
 				ParentHashes:  []string{"1459c2170e3c4d8e95c47e157cd659eeeb3c33f6"},
@@ -173,10 +192,14 @@ func TestParseLogOutputFixtures(t *testing.T) {
 				CommitterDate: time.Unix(1768032300, 0).UTC(),
 				Subject:       "initial commit ✨",
 				Body:          "multi\nline body\nzażółta gęśl, jaźń",
-				Refs:          []Ref{{Kind: RefTag, Name: "v0.9"}},
+				Refs: []Ref{
+					{Kind: RefTag, Name: "v0.9"},
+					{Kind: RefTag, Name: "annone"},
+					{Kind: RefBranch, Name: "feature/with-slash"},
+				},
 			},
 		}},
-		{"log_merges.log", []Commit{
+		{"log_merges.txt", []Commit{
 			{
 				Hash: "4553fdd71a4a592a32dd44375827600cdcb20cca", ShortHash: "4553fdd",
 				ParentHashes: []string{
