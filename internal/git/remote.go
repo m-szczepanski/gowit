@@ -73,7 +73,10 @@ func parseRemoteV(out string) ([]Remote, error) {
 
 // Upstream is the remote branch a local branch tracks. Remote and Branch
 // split Ref at the first slash; a tracked local ref (no remote) leaves
-// Remote empty.
+// Remote empty. Remote names containing a slash are legal to git but
+// break this split and under-report Remote; they are pathological enough
+// that resolving them against the remote list is not worth a second call,
+// push and pull target through git's own config anyway.
 type Upstream struct {
 	Ref    string `json:"ref"`
 	Remote string `json:"remote"`
