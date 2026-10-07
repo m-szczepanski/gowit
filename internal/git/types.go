@@ -107,9 +107,3 @@ type StatusResult struct {
 	Branch BranchStatus
 	Files  []FileStatus
 }
-
-// Commit is one entry from `git log --format=...` (issue #15).
-type Commit struct {
-	Hash    string
-	Subject string
-}

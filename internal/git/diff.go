@@ -83,7 +83,7 @@ func parseUnifiedDiff(data []byte) ([]FileDiff, error) {
 		}
 	}
 	if p.inHunk && (p.oldRem > 0 || p.newRem > 0) {
-		return nil, diffParseError("hunk truncated at end of output: " + p.hunk().Header)
+		return nil, parseFailed("hunk truncated at end of output: " + p.hunk().Header)
 	}
 	for i := range p.files {
 		if p.files[i].Change == "" {
@@ -121,7 +121,7 @@ func (p *diffParser) feed(line string) error {
 		p.cur = len(p.files) - 1
 	case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "+++ "):
 		if p.cur < 0 {
-			return diffParseError("file header outside any section: " + line)
+			return parseFailed("file header outside any section: " + line)
 		}
 		f := p.file()
 		value := line[4:]
@@ -156,7 +156,7 @@ func (p *diffParser) feedExtended(line string) error {
 		return nil
 	}
 	if p.cur < 0 {
-		return diffParseError("extended header outside any section: " + line)
+		return parseFailed("extended header outside any section: " + line)
 	}
 	f, value := p.file(), line[len(key):]
 	switch key {
@@ -171,7 +171,7 @@ func (p *diffParser) feedExtended(line string) error {
 	case "similarity index ":
 		n, err := strconv.Atoi(strings.TrimSuffix(value, "%"))
 		if err != nil || n < 0 || n > 100 {
-			return diffParseError("malformed similarity index: " + line)
+			return parseFailed("malformed similarity index: " + line)
 		}
 		f.Similarity = n
 	case "rename from ":
@@ -197,11 +197,11 @@ func (p *diffParser) feedExtended(line string) error {
 // requested path back in, which single-file diffs always know.
 func (p *diffParser) setBinaryEndpoints(f *FileDiff, body string) error {
 	if !strings.HasSuffix(body, " differ") {
-		return diffParseError("malformed binary files header: " + body)
+		return parseFailed("malformed binary files header: " + body)
 	}
 	left, right, ok := strings.Cut(strings.TrimSuffix(body, " differ"), " and ")
 	if !ok {
-		return diffParseError("malformed binary files header: " + body)
+		return parseFailed("malformed binary files header: " + body)
 	}
 	var err error
 	if f.OldPath, _, err = decodeEndpoint(left, "a/"); err != nil {
@@ -216,13 +216,13 @@ func (p *diffParser) setBinaryEndpoints(f *FileDiff, body string) error {
 
 func (p *diffParser) feedHunk(line string) error {
 	if line == "" {
-		return diffParseError("empty line inside hunk")
+		return parseFailed("empty line inside hunk")
 	}
 	h := p.hunk()
 	switch line[0] {
 	case ' ':
 		if p.oldRem == 0 || p.newRem == 0 {
-			return diffParseError("context line beyond declared range: " + line)
+			return parseFailed("context line beyond declared range: " + line)
 		}
 		p.oldRem--
 		p.newRem--
@@ -231,29 +231,29 @@ func (p *diffParser) feedHunk(line string) error {
 		p.newNum++
 	case '-':
 		if p.oldRem == 0 {
-			return diffParseError("removed line beyond declared range: " + line)
+			return parseFailed("removed line beyond declared range: " + line)
 		}
 		p.oldRem--
 		h.Lines = append(h.Lines, DiffLine{Type: DiffLineDel, OldNum: p.oldNum, Text: line[1:]})
 		p.oldNum++
 	case '+':
 		if p.newRem == 0 {
-			return diffParseError("added line beyond declared range: " + line)
+			return parseFailed("added line beyond declared range: " + line)
 		}
 		p.newRem--
 		h.Lines = append(h.Lines, DiffLine{Type: DiffLineAdd, NewNum: p.newNum, Text: line[1:]})
 		p.newNum++
 	case '\\':
 		if line != diffNoNewlineMarker {
-			return diffParseError("unexpected line inside hunk: " + line)
+			return parseFailed("unexpected line inside hunk: " + line)
 		}
 		n := len(h.Lines)
 		if n == 0 {
-			return diffParseError(`no-newline marker without a preceding line`)
+			return parseFailed(`no-newline marker without a preceding line`)
 		}
 		h.Lines[n-1].NoNewline = true
 	default:
-		return diffParseError("unexpected line inside hunk: " + line)
+		return parseFailed("unexpected line inside hunk: " + line)
 	}
 	return nil
 }
@@ -269,7 +269,7 @@ func (p *diffParser) hunk() *DiffHunk {
 
 func (p *diffParser) startHunk(line string) error {
 	if p.cur < 0 {
-		return diffParseError("hunk outside any file section: " + line)
+		return parseFailed("hunk outside any file section: " + line)
 	}
 	oldStart, oldCount, newStart, newCount, err := parseRangeHeaders(line)
 	if err != nil {
@@ -295,15 +295,15 @@ func (p *diffParser) startHunk(line string) error {
 func parseRangeHeaders(line string) (oldStart, oldCount, newStart, newCount int, err error) {
 	rest, ok := strings.CutPrefix(line, "@@ -")
 	if !ok {
-		return 0, 0, 0, 0, diffParseError("malformed hunk header: " + line)
+		return 0, 0, 0, 0, parseFailed("malformed hunk header: " + line)
 	}
 	oldText, rest, ok := strings.Cut(rest, " +")
 	if !ok {
-		return 0, 0, 0, 0, diffParseError("malformed hunk header: " + line)
+		return 0, 0, 0, 0, parseFailed("malformed hunk header: " + line)
 	}
 	newText, rest, ok := strings.Cut(rest, " @@")
 	if !ok || (rest != "" && !strings.HasPrefix(rest, " ")) {
-		return 0, 0, 0, 0, diffParseError("malformed hunk header: " + line)
+		return 0, 0, 0, 0, parseFailed("malformed hunk header: " + line)
 	}
 	if oldStart, oldCount, err = parseRange(oldText, line); err != nil {
 		return
@@ -318,13 +318,13 @@ func parseRange(text, header string) (start, count int, err error) {
 	startText, countText, hasCount := strings.Cut(text, ",")
 	start, err = strconv.Atoi(startText)
 	if err != nil || start < 0 {
-		return 0, 0, diffParseError("malformed hunk header: " + header)
+		return 0, 0, parseFailed("malformed hunk header: " + header)
 	}
 	count = 1
 	if hasCount {
 		count, err = strconv.Atoi(countText)
 		if err != nil || count < 0 {
-			return 0, 0, diffParseError("malformed hunk header: " + header)
+			return 0, 0, parseFailed("malformed hunk header: " + header)
 		}
 	}
 	return start, count, nil
@@ -367,7 +367,7 @@ func unquoteGitPath(s string) (string, error) {
 		return s, nil
 	}
 	if len(s) < 2 || !strings.HasSuffix(s, "\"") {
-		return "", diffParseError("malformed quoted path: " + s)
+		return "", parseFailed("malformed quoted path: " + s)
 	}
 	body := s[1 : len(s)-1]
 	var b strings.Builder
@@ -379,7 +379,7 @@ func unquoteGitPath(s string) (string, error) {
 		}
 		i++
 		if i >= len(body) {
-			return "", diffParseError("dangling escape in quoted path: " + s)
+			return "", parseFailed("dangling escape in quoted path: " + s)
 		}
 		switch e := body[i]; e {
 		case '"', '\\':
@@ -400,7 +400,7 @@ func unquoteGitPath(s string) (string, error) {
 			b.WriteByte('\v')
 		default:
 			if e < '0' || e > '7' {
-				return "", diffParseError("unknown escape \\" + string(e) + " in quoted path: " + s)
+				return "", parseFailed("unknown escape \\" + string(e) + " in quoted path: " + s)
 			}
 			val := int(e - '0')
 			for d := 0; d < 2 && i+1 < len(body) && body[i+1] >= '0' && body[i+1] <= '7'; d++ {
@@ -411,10 +411,6 @@ func unquoteGitPath(s string) (string, error) {
 		}
 	}
 	return b.String(), nil
-}
-
-func diffParseError(msg string) error {
-	return &GitError{Code: CodeParseFailed, Message: msg, ExitCode: -1}
 }
 
 // DiffOption configures diff generation (issue #24).
@@ -651,6 +647,23 @@ func splitContentLines(data []byte) (lines []string, unterminated bool) {
 	return strings.Split(text, "\n"), unterminated
 }
 
+// CommitChangedFiles lists the paths one commit touched against its first
+// parent (same merge rule as the diff methods), with git status letters
+// and rename scores. It is the cheap single-pass sibling of
+// DiffCommitFiles: Added, Deleted and Binary stay zero because the
+// numstat pass is skipped, covering changed-files lists like #30's that
+// need names but not counts.
+func (r *Repo) CommitChangedFiles(ctx context.Context, hash string) ([]CommitFileStat, error) {
+	if err := checkCommitHash(hash); err != nil {
+		return nil, err
+	}
+	out, err := r.showZ(ctx, hash, "--name-status", "-M")
+	if err != nil {
+		return nil, err
+	}
+	return changedFilesFromStatus(out)
+}
+
 // DiffCommitFiles returns the per-file summary of one commit against its
 // first parent (same merge rule as DiffCommitFile): git status letter,
 // insertions and deletions, with rename detection on (-M). Neither
@@ -671,10 +684,27 @@ func (r *Repo) DiffCommitFiles(ctx context.Context, hash string) ([]CommitFileSt
 	return parseCommitFileStats(raws[0], raws[1])
 }
 
+// changedFilesFromStatus converts a NUL-parsed --name-status stream into
+// summary entries; counts and binary flags stay zero until
+// parseCommitFileStats joins the numstat pass.
+func changedFilesFromStatus(out []byte) ([]CommitFileStat, error) {
+	statuses, err := parseNameStatusZ(out)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]CommitFileStat, 0, len(statuses))
+	for _, st := range statuses {
+		files = append(files, CommitFileStat{
+			Change: st.change, Path: st.path, OldPath: st.oldPath, Similarity: st.similarity,
+		})
+	}
+	return files, nil
+}
+
 // parseCommitFileStats joins the two decoded show passes; a status record
 // without its numstat counterpart means git output was cut short.
 func parseCommitFileStats(namesOut, countsOut []byte) ([]CommitFileStat, error) {
-	statuses, err := parseNameStatusZ(namesOut)
+	stats, err := changedFilesFromStatus(namesOut)
 	if err != nil {
 		return nil, err
 	}
@@ -682,16 +712,12 @@ func parseCommitFileStats(namesOut, countsOut []byte) ([]CommitFileStat, error) 
 	if err != nil {
 		return nil, err
 	}
-	stats := make([]CommitFileStat, 0, len(statuses))
-	for _, st := range statuses {
-		cn, ok := counts[st.path]
+	for i := range stats {
+		cn, ok := counts[stats[i].Path]
 		if !ok {
-			return nil, diffParseError("numstat record missing for " + st.path)
+			return nil, parseFailed("numstat record missing for " + stats[i].Path)
 		}
-		stats = append(stats, CommitFileStat{
-			Change: st.change, Path: st.path, OldPath: st.oldPath,
-			Similarity: st.similarity, Binary: cn.binary, Added: cn.added, Deleted: cn.deleted,
-		})
+		stats[i].Binary, stats[i].Added, stats[i].Deleted = cn.binary, cn.added, cn.deleted
 	}
 	return stats, nil
 }
@@ -702,12 +728,10 @@ func (r *Repo) showZ(ctx context.Context, hash string, flags ...string) ([]byte,
 }
 
 func checkCommitHash(hash string) error {
-	// leading "-" would be swallowed as an option; argv passes verbatim but
-	// the option boundary still needs guarding
-	if hash == "" || strings.HasPrefix(hash, "-") {
+	if hash == "" {
 		return &GitError{Code: CodeValidationFailed, Message: "commit hash required", ExitCode: -1}
 	}
-	return nil
+	return guardOptionLike(hash, "commit hash")
 }
 
 func showCommitDiffArgs(hash string, pre, post []string) []string {
@@ -736,26 +760,26 @@ func parseNameStatusZ(out []byte) ([]nameStatusEntry, error) {
 	for i := 0; i < len(tokens); i++ {
 		status := tokens[i]
 		if status == "" {
-			return nil, diffParseError("empty name-status record")
+			return nil, parseFailed("empty name-status record")
 		}
 		e := nameStatusEntry{change: changeFromLetter(status[0])}
 		if score := status[1:]; score != "" {
 			n, err := strconv.Atoi(score)
 			if err != nil {
-				return nil, diffParseError("malformed name-status score: " + status)
+				return nil, parseFailed("malformed name-status score: " + status)
 			}
 			e.similarity = n
 		}
 		switch status[0] {
 		case 'R', 'C':
 			if i+2 >= len(tokens) {
-				return nil, diffParseError("truncated rename record: " + status)
+				return nil, parseFailed("truncated rename record: " + status)
 			}
 			e.oldPath, e.path = tokens[i+1], tokens[i+2]
 			i += 2
 		default:
 			if i+1 >= len(tokens) {
-				return nil, diffParseError("truncated name-status record: " + status)
+				return nil, parseFailed("truncated name-status record: " + status)
 			}
 			e.path = tokens[i+1]
 			i++
@@ -782,11 +806,11 @@ func parseNumstatZ(out []byte) (map[string]numstatEntry, error) {
 	for i := 0; i < len(tokens); i++ {
 		addText, rest, ok := strings.Cut(tokens[i], "\t")
 		if !ok {
-			return nil, diffParseError("malformed numstat record: " + tokens[i])
+			return nil, parseFailed("malformed numstat record: " + tokens[i])
 		}
 		delText, path, hasPath := strings.Cut(rest, "\t")
 		if !hasPath {
-			return nil, diffParseError("malformed numstat record: " + tokens[i])
+			return nil, parseFailed("malformed numstat record: " + tokens[i])
 		}
 		var e numstatEntry
 		if addText == "-" && delText == "-" {
@@ -794,17 +818,17 @@ func parseNumstatZ(out []byte) (map[string]numstatEntry, error) {
 		} else {
 			added, err := strconv.Atoi(addText)
 			if err != nil {
-				return nil, diffParseError("malformed numstat counts: " + tokens[i])
+				return nil, parseFailed("malformed numstat counts: " + tokens[i])
 			}
 			deleted, err := strconv.Atoi(delText)
 			if err != nil {
-				return nil, diffParseError("malformed numstat counts: " + tokens[i])
+				return nil, parseFailed("malformed numstat counts: " + tokens[i])
 			}
 			e.added, e.deleted = added, deleted
 		}
 		if path == "" {
 			if i+2 >= len(tokens) {
-				return nil, diffParseError("truncated numstat rename record")
+				return nil, parseFailed("truncated numstat rename record")
 			}
 			path = tokens[i+2]
 			i += 2
