@@ -324,3 +324,92 @@ func TestCapabilitiesPropagatesStatusFailure(t *testing.T) {
 		t.Fatalf("err = %v, want command_failed", err)
 	}
 }
+
+// TestRemoteTrackingMatrix walks the WI6 scenario list against one local
+// bare origin: clone (auto-tracked), a fresh branch pushed without -u
+// (untracked), explicit set-upstream, a second remote, dangling tracking
+// config, and detached HEAD.
+func TestRemoteTrackingMatrix(t *testing.T) {
+	ctx := context.Background()
+	seed := initRepo(t)
+	writeFile(t, seed, "f.txt", "x\n")
+	commitAll(t, seed, "seed")
+	if _, _, err := runGit(ctx, seed, "clone", "--bare", ".", "../origin.git"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runGit(ctx, seed, "clone", "-q", "../origin.git", "work"); err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(seed, "work")
+	repo := openRepo(t, work)
+
+	remotes, err := repo.Remotes(ctx)
+	if err != nil || len(remotes) != 1 || remotes[0].Name != "origin" || remotes[0].FetchURL == "" {
+		t.Fatalf("clone remotes = %+v err %v, want origin with a url", remotes, err)
+	}
+	if remotes[0].PushURL != remotes[0].FetchURL {
+		t.Fatalf("clone push url %q, want same as fetch", remotes[0].PushURL)
+	}
+	up, err := repo.Upstream(ctx, "main")
+	if err != nil || up.Ref != "origin/main" || up.Remote != "origin" || up.Branch != "main" {
+		t.Fatalf("clone upstream = %+v err %v, want tracked origin/main", up, err)
+	}
+	caps, err := repo.Capabilities(ctx)
+	if err != nil || !caps.CanPush || !caps.CanPull || !caps.CanFetch || caps.Reason != "" {
+		t.Fatalf("clone caps = %+v err %v", caps, err)
+	}
+
+	// fresh branch pushed without -u: exists on the remote, untracked
+	writeFile(t, work, "g.txt", "y\n")
+	commitAll(t, work, "feature work")
+	runGit(ctx, work, "checkout", "-qb", "feature")
+	if _, _, err := runGit(ctx, work, "push", "-q", "origin", "feature"); err != nil {
+		t.Fatalf("push feature: %v", err)
+	}
+	if _, err := repo.Upstream(ctx, "feature"); !errors.Is(err, ErrNoUpstream) {
+		t.Fatalf("untracked feature: err = %v, want no_upstream", err)
+	}
+	caps, err = repo.Capabilities(ctx)
+	if err != nil || caps.Reason != IssueNoUpstream || !caps.CanFetch {
+		t.Fatalf("untracked caps = %+v err %v, want no_upstream while fetch stays enabled", caps, err)
+	}
+	if err := repo.SetUpstream(ctx, "feature", "origin", "feature"); err != nil {
+		t.Fatalf("SetUpstream: %v", err)
+	}
+	up, err = repo.Upstream(ctx, "feature")
+	if err != nil || up.Ref != "origin/feature" {
+		t.Fatalf("after set-upstream = %+v err %v", up, err)
+	}
+	caps, err = repo.Capabilities(ctx)
+	if err != nil || !caps.CanPush || !caps.CanPull {
+		t.Fatalf("caps after set-upstream = %+v err %v", caps, err)
+	}
+
+	// second remote: sorted by name in listing
+	// origin.git lives next to seed, i.e. two levels above work
+	if _, _, err := runGit(ctx, work, "clone", "--bare", "../../origin.git", "../fork.git"); err != nil {
+		t.Fatal(err)
+	}
+	addRemote(t, work, "fork", "../fork.git")
+	remotes, err = repo.Remotes(ctx)
+	if err != nil || len(remotes) != 2 || remotes[0].Name != "fork" || remotes[1].Name != "origin" {
+		t.Fatalf("two remotes = %+v err %v, want [fork, origin]", remotes, err)
+	}
+
+	// tracking config that names a remote branch we have never fetched
+	runGit(ctx, work, "branch", "dangle")
+	gitConfig(t, work, "branch.dangle.remote", "origin")
+	if _, _, err := runGit(ctx, work, "config", "branch.dangle.merge", "refs/heads/never-fetched"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Upstream(ctx, "dangle"); !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("dangling tracking: err = %v, want command_failed (config exists, ref does not)", err)
+	}
+
+	// detached HEAD: fetch stays available, push/pull drop out
+	runGit(ctx, work, "checkout", "-q", "--detach", "main")
+	caps, err = repo.Capabilities(ctx)
+	if err != nil || !caps.Detached || caps.CanPush || caps.CanPull || !caps.CanFetch || caps.Reason != IssueDetachedHead {
+		t.Fatalf("detached caps = %+v err %v", caps, err)
+	}
+}
