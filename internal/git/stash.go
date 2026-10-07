@@ -2,6 +2,8 @@ package git
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -107,4 +109,57 @@ func stashType(subject string) string {
 	default:
 		return "other"
 	}
+}
+
+// StashApply restores a stash entry and keeps the entry, so a failed
+// restore loses nothing. Index is the position from StashList. Applying
+// rewrites work-tree files, which the watcher (#17) turns into a status
+// refresh; stash ops never move HEAD, so branch and log caches stay valid
+// untouched.
+func (r *Repo) StashApply(ctx context.Context, idx int) error {
+	ref, err := stashRef(idx)
+	if err != nil {
+		return err
+	}
+	_, _, err = runGit(ctx, r.path, "stash", "apply", ref)
+	return stashConflict(err)
+}
+
+// StashPop restores and drops the entry. git refuses the drop while the
+// restore conflicts, so the entry survives exactly like StashApply.
+func (r *Repo) StashPop(ctx context.Context, idx int) error {
+	ref, err := stashRef(idx)
+	if err != nil {
+		return err
+	}
+	_, _, err = runGit(ctx, r.path, "stash", "pop", ref)
+	return stashConflict(err)
+}
+
+// StashDrop removes the entry without touching the work tree.
+func (r *Repo) StashDrop(ctx context.Context, idx int) error {
+	ref, err := stashRef(idx)
+	if err != nil {
+		return err
+	}
+	_, _, err = runGit(ctx, r.path, "stash", "drop", ref)
+	return err
+}
+
+func stashRef(idx int) (string, error) {
+	if idx < 0 {
+		return "", &GitError{Code: CodeValidationFailed, Message: "stash index cannot be negative", ExitCode: -1}
+	}
+	return fmt.Sprintf("stash@{%d}", idx), nil
+}
+
+// stashConflict upgrades the merge-conflict shape (apply/pop printing
+// CONFLICT) to ErrStashConflict; the untracked-collision failure already
+// arrives classified from classify.
+func stashConflict(err error) error {
+	if errors.Is(err, ErrConflict) {
+		ge := err.(*GitError)
+		return &GitError{Code: CodeStashConflict, Message: ge.Message, ExitCode: ge.ExitCode}
+	}
+	return err
 }

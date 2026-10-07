@@ -23,6 +23,7 @@ const (
 	CodeCommitRejected   ErrorCode = "commit_rejected"
 	CodeNothingToCommit  ErrorCode = "nothing_to_commit"
 	CodeValidationFailed ErrorCode = "validation_failed"
+	CodeStashConflict    ErrorCode = "stash_conflict"
 )
 
 // GitError is the only error type that crosses to the app layer (ARCHITECTURE.md §4).
@@ -56,6 +57,7 @@ var (
 	ErrCommitRejected   = &GitError{Code: CodeCommitRejected}
 	ErrNothingToCommit  = &GitError{Code: CodeNothingToCommit}
 	ErrValidationFailed = &GitError{Code: CodeValidationFailed}
+	ErrStashConflict    = &GitError{Code: CodeStashConflict}
 )
 
 // classify maps a failed run's combined output to a GitError. ctx completion
@@ -74,6 +76,8 @@ func classify(ctx context.Context, output string, exitCode int) *GitError {
 		code = CodeNoUpstream
 	case strings.Contains(output, "CONFLICT ("):
 		code = CodeConflict
+	case strings.Contains(output, "could not restore untracked files"):
+		code = CodeStashConflict
 	case strings.Contains(output, "terminal prompts disabled"),
 		strings.Contains(output, "Authentication failed"),
 		strings.Contains(output, "Permission denied (publickey)"):
