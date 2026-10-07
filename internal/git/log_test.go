@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,7 @@ func TestLogLinearHistory(t *testing.T) {
 	commitAll(t, dir, "last")
 	runGit(ctx, dir, "tag", "v0.1")
 
-	commits, err := openRepo(t, dir).Log(ctx)
+	commits, err := openRepo(t, dir).Log(ctx, LogOptions{})
 	if err != nil {
 		t.Fatalf("Log: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestLogLinearHistory(t *testing.T) {
 
 func TestLogUnbornRepoIsEmpty(t *testing.T) {
 	dir := initRepo(t)
-	commits, err := openRepo(t, dir).Log(context.Background())
+	commits, err := openRepo(t, dir).Log(context.Background(), LogOptions{})
 	if err != nil {
 		t.Fatalf("Log: %v", err)
 	}
@@ -76,7 +77,7 @@ func TestLogCtxKill(t *testing.T) {
 	commitAll(t, dir, "one")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := openRepo(t, dir).Log(ctx); !errors.Is(err, ErrTimeout) {
+	if _, err := openRepo(t, dir).Log(ctx, LogOptions{}); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want timeout", err)
 	}
 }
@@ -100,7 +101,71 @@ func TestLogPropagatesGitFailure(t *testing.T) {
 	if err := os.WriteFile(object, []byte("garbage-not-a-commit"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openRepo(t, dir).Log(ctx); !errors.Is(err, ErrCommandFailed) {
+	if _, err := openRepo(t, dir).Log(ctx, LogOptions{}); !errors.Is(err, ErrCommandFailed) {
 		t.Fatalf("err = %v, want command_failed", err)
 	}
+}
+
+func TestLogPagination(t *testing.T) {
+	ctx := context.Background()
+	dir := initRepo(t)
+	writeFile(t, dir, "f.txt", "0\n")
+	commitAll(t, dir, "c0")
+	for i := 1; i < 5; i++ {
+		writeFile(t, dir, "f.txt", fmt.Sprint(i)+"\n")
+		commitAll(t, dir, fmt.Sprint("c", i))
+	}
+	repo := openRepo(t, dir)
+	all, err := repo.Log(ctx, LogOptions{})
+	if err != nil || len(all) != 5 {
+		t.Fatalf("all = %d commits err %v, want 5", len(all), err)
+	}
+
+	page, err := repo.Log(ctx, LogOptions{MaxCount: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 2 || page[0].Subject != "c4" || page[1].Subject != "c3" {
+		t.Fatalf("first page = %+v, want c4, c3", subjects(page))
+	}
+
+	page, err = repo.Log(ctx, LogOptions{MaxCount: 2, Skip: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 2 || page[0].Subject != "c2" || page[1].Subject != "c1" {
+		t.Fatalf("second page = %+v, want c2, c1", subjects(page))
+	}
+
+	// window reaching past the oldest commit clamps instead of failing
+	page, err = repo.Log(ctx, LogOptions{MaxCount: 2, Skip: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 1 || page[0].Subject != "c0" {
+		t.Fatalf("tail page = %+v, want just c0", subjects(page))
+	}
+
+	page, err = repo.Log(ctx, LogOptions{Skip: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 0 {
+		t.Fatalf("past-end page = %+v, want empty", subjects(page))
+	}
+
+	if _, err := repo.Log(ctx, LogOptions{MaxCount: -1}); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("err = %v, want validation_failed", err)
+	}
+	if _, err := repo.Log(ctx, LogOptions{Skip: -2}); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("err = %v, want validation_failed", err)
+	}
+}
+
+func subjects(cs []Commit) []string {
+	out := []string{}
+	for _, c := range cs {
+		out = append(out, c.Subject)
+	}
+	return out
 }

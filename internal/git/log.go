@@ -75,9 +75,19 @@ func parseRefs(decorations string) []Ref {
 // treat it as out of scope.
 const logFormat = "%x1e%H\x1f%h\x1f%P\x1f%an\x1f%ae\x1f%at\x1f%ct\x1f%s\x1f%b\x1f%D"
 
+// LogOptions bounds the listing window. MaxCount and Skip map to
+// git log -n/--skip for virtualized "load more"; zero means "no limit".
+type LogOptions struct {
+	MaxCount int `json:"maxCount"`
+	Skip     int `json:"skip"`
+}
+
 // Log lists commits newest-first from the current branch. An unborn HEAD
 // yields an empty list rather than git's fatal.
-func (r *Repo) Log(ctx context.Context) ([]Commit, error) {
+func (r *Repo) Log(ctx context.Context, opts LogOptions) ([]Commit, error) {
+	if opts.MaxCount < 0 || opts.Skip < 0 {
+		return nil, &GitError{Code: CodeValidationFailed, Message: "log window cannot be negative", ExitCode: -1}
+	}
 	_, _, err := runGit(ctx, r.path, "rev-parse", "--verify", "--quiet", "HEAD")
 	if err != nil {
 		var ge *GitError
@@ -86,7 +96,14 @@ func (r *Repo) Log(ctx context.Context) ([]Commit, error) {
 		}
 		return nil, err
 	}
-	out, _, err := runGit(ctx, r.path, "log", "--decorate=short", "--format="+logFormat)
+	args := []string{"log", "--decorate=short", "--format=" + logFormat}
+	if opts.MaxCount > 0 {
+		args = append(args, "-n", strconv.Itoa(opts.MaxCount))
+	}
+	if opts.Skip > 0 {
+		args = append(args, "--skip", strconv.Itoa(opts.Skip))
+	}
+	out, _, err := runGit(ctx, r.path, args...)
 	if err != nil {
 		return nil, err
 	}
