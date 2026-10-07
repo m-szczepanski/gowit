@@ -111,8 +111,8 @@ func TestStageAndUnstageRequirePaths(t *testing.T) {
 	// reset/restore without one would touch the whole work tree
 	for _, err := range []error{repo.Stage(ctx), repo.Unstage(ctx), repo.DiscardChanges(ctx)} {
 		var ge *GitError
-		if !errors.As(err, &ge) || ge.Code != CodeCommandFailed {
-			t.Fatalf("empty path call err = %v, want command_failed GitError", err)
+		if !errors.As(err, &ge) || !errors.Is(err, ErrValidationFailed) {
+			t.Fatalf("empty path call err = %v, want validation_failed", err)
 		}
 		if !strings.Contains(ge.Message, "path") {
 			t.Fatalf("message = %q, should mention paths", ge.Message)

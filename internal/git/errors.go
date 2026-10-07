@@ -11,15 +11,18 @@ import (
 type ErrorCode string
 
 const (
-	CodeNotARepository ErrorCode = "not_a_repository"
-	CodeBareRepository ErrorCode = "bare_repository"
-	CodePathMissing    ErrorCode = "path_missing"
-	CodeNoUpstream     ErrorCode = "no_upstream"
-	CodeConflict       ErrorCode = "conflict"
-	CodeAuthFailed     ErrorCode = "auth_failed"
-	CodeTimeout        ErrorCode = "timeout"
-	CodeCommandFailed  ErrorCode = "command_failed"
-	CodeParseFailed    ErrorCode = "parse_failed"
+	CodeNotARepository   ErrorCode = "not_a_repository"
+	CodeBareRepository   ErrorCode = "bare_repository"
+	CodePathMissing      ErrorCode = "path_missing"
+	CodeNoUpstream       ErrorCode = "no_upstream"
+	CodeConflict         ErrorCode = "conflict"
+	CodeAuthFailed       ErrorCode = "auth_failed"
+	CodeTimeout          ErrorCode = "timeout"
+	CodeCommandFailed    ErrorCode = "command_failed"
+	CodeParseFailed      ErrorCode = "parse_failed"
+	CodeCommitRejected   ErrorCode = "commit_rejected"
+	CodeNothingToCommit  ErrorCode = "nothing_to_commit"
+	CodeValidationFailed ErrorCode = "validation_failed"
 )
 
 // GitError is the only error type that crosses to the app layer (ARCHITECTURE.md §4).
@@ -41,15 +44,18 @@ func (e *GitError) Is(target error) bool {
 
 // Sentinels for errors.Is; the zero Message/ExitCode are placeholders, only Code participates in Is.
 var (
-	ErrNotARepository = &GitError{Code: CodeNotARepository}
-	ErrBareRepository = &GitError{Code: CodeBareRepository}
-	ErrPathMissing    = &GitError{Code: CodePathMissing}
-	ErrNoUpstream     = &GitError{Code: CodeNoUpstream}
-	ErrConflict       = &GitError{Code: CodeConflict}
-	ErrAuthFailed     = &GitError{Code: CodeAuthFailed}
-	ErrTimeout        = &GitError{Code: CodeTimeout}
-	ErrCommandFailed  = &GitError{Code: CodeCommandFailed}
-	ErrParseFailed    = &GitError{Code: CodeParseFailed}
+	ErrNotARepository   = &GitError{Code: CodeNotARepository}
+	ErrBareRepository   = &GitError{Code: CodeBareRepository}
+	ErrPathMissing      = &GitError{Code: CodePathMissing}
+	ErrNoUpstream       = &GitError{Code: CodeNoUpstream}
+	ErrConflict         = &GitError{Code: CodeConflict}
+	ErrAuthFailed       = &GitError{Code: CodeAuthFailed}
+	ErrTimeout          = &GitError{Code: CodeTimeout}
+	ErrCommandFailed    = &GitError{Code: CodeCommandFailed}
+	ErrParseFailed      = &GitError{Code: CodeParseFailed}
+	ErrCommitRejected   = &GitError{Code: CodeCommitRejected}
+	ErrNothingToCommit  = &GitError{Code: CodeNothingToCommit}
+	ErrValidationFailed = &GitError{Code: CodeValidationFailed}
 )
 
 // classify maps a failed run's combined output to a GitError. ctx completion
