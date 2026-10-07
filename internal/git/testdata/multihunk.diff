@@ -1,0 +1,16 @@
+diff --git a/many.txt b/many.txt
+index 1c99002..d886bc5 100644
+--- a/many.txt
++++ b/many.txt
+@@ -1,4 +1,4 @@
+-1
++ONE
+ 2
+ 3
+ 4
+@@ -37,4 +37,4 @@
+ 37
+ 38
+ 39
+-40
++FORTY

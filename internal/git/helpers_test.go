@@ -4,9 +4,22 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// setGitIdentity pins the committer identity in a repo created by git
+// clone: clone does not carry the source's local user config, and CI
+// runners have no global identity to fall back on.
+func setGitIdentity(t *testing.T, dir string) {
+	t.Helper()
+	for _, kv := range [][2]string{{"user.email", "t@t"}, {"user.name", "test"}} {
+		if _, _, err := runGit(context.Background(), dir, "config", kv[0], kv[1]); err != nil {
+			t.Fatalf("git config %s: %v", kv[0], err)
+		}
+	}
+}
 
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
@@ -77,4 +90,15 @@ func statusByPath(res *StatusResult) map[string]FileStatus {
 		m[f.Path] = f
 	}
 	return m
+}
+
+// unixPerms reports whether the platform maps chmod onto the git exec bit.
+// Windows: core.fileMode is off and Go's Mode() carries no 0111 bits.
+func unixPerms() bool { return runtime.GOOS != "windows" }
+
+func skipWithoutUnixPerms(t *testing.T) {
+	t.Helper()
+	if !unixPerms() {
+		t.Skip("no exec bit on Windows; git ignores chmod there")
+	}
 }

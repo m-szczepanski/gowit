@@ -17,6 +17,12 @@
 *.css text eol=lf
 *.html text eol=lf
 
+# Machine-format fixtures (internal/git/testdata) must check out byte-exact:
+# a converted line ending would change parsed contents and break parse
+# tests. *.log is globally ignored (npm noise), so fixtures use .txt.
+*.diff text eol=lf
+internal/git/testdata/*.txt text eol=lf
+
 *.yml text eol=lf
 *.yaml text eol=lf
 *.toml text eol=lf

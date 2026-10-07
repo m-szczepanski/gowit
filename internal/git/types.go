@@ -68,6 +68,12 @@ func changeOf(f FileStatus) Change {
 	if code == '.' {
 		code = f.XY[1]
 	}
+	return changeFromLetter(code)
+}
+
+// changeFromLetter maps git's single-letter change status - the name-status
+// code and the porcelain XY code share it.
+func changeFromLetter(code byte) Change {
 	switch code {
 	case 'A':
 		return ChangeAdded
@@ -100,10 +106,4 @@ type BranchStatus struct {
 type StatusResult struct {
 	Branch BranchStatus
 	Files  []FileStatus
-}
-
-// Commit is one entry from `git log --format=...` (issue #15).
-type Commit struct {
-	Hash    string
-	Subject string
 }

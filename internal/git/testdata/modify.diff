@@ -1,0 +1,10 @@
+diff --git a/mod.txt b/mod.txt
+index f384549..6addb9b 100644
+--- a/mod.txt
++++ b/mod.txt
+@@ -1,4 +1,4 @@
+ one
+-two
++TWO
+ three
+ four
