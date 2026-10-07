@@ -5,6 +5,8 @@ import {config} from '../models';
 
 export function AddRecentRepo(arg1:string):Promise<main.CallResult>;
 
+export function Commit(arg1:string,arg2:boolean):Promise<main.CallResult>;
+
 export function DiscardFiles(arg1:Array<string>):Promise<main.StatusResponse>;
 
 export function GetRecentRepos():Promise<Array<config.RecentRepo>>;
