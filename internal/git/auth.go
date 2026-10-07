@@ -22,3 +22,7 @@ package git
 // (errors.go), so the UI can point users at their helper or agent rather
 // than a gowit settings screen. See docs/AUTH.md for the manual matrix
 // and platform quirks.
+
+// authGuidance is appended to every classified credential failure so the
+// UI names the fix (system setup) instead of only echoing git's raw line.
+const authGuidance = " | gowit stores no credentials: verify your SSH agent (ssh-add -l) or credential helper (git config credential.helper)"

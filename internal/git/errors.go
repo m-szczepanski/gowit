@@ -75,8 +75,12 @@ func classify(ctx context.Context, output string, exitCode int) *GitError {
 	case strings.Contains(output, "CONFLICT ("):
 		code = CodeConflict
 	case strings.Contains(output, "terminal prompts disabled"),
-		strings.Contains(output, "Authentication failed"):
+		strings.Contains(output, "Authentication failed"),
+		strings.Contains(output, "Permission denied (publickey)"):
 		code = CodeAuthFailed
+	}
+	if code == CodeAuthFailed {
+		message += authGuidance
 	}
 	return &GitError{Code: code, Message: message, ExitCode: exitCode}
 }
