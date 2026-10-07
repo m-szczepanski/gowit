@@ -7,6 +7,8 @@ import (
 
 // diffNoNewlineMarker is git's exact, locale-stable (we force LC_ALL=C)
 // end-of-hunk marker; a body line only reaches it when it matches whole.
+const devNullPath = "/dev/null"
+
 const diffNoNewlineMarker = `\ No newline at end of file`
 
 // DiffLineType classifies one line inside a hunk: unchanged context, an
@@ -41,11 +43,21 @@ type DiffHunk struct {
 	Lines    []DiffLine `json:"lines"`
 }
 
-// FileDiff is the parsed unified diff of a single file.
+// FileDiff is the parsed unified diff of a single file. The two path
+// endpoints carry the names as git sees them: OldPath is empty for adds,
+// NewPath for deletes, and both stay empty for sections without name
+// headers (a zero-byte new file), where the caller already knows the
+// requested path. Change classifies the section and defaults to
+// ChangeModified; mode-only edits keep both modes with zero hunks.
 type FileDiff struct {
-	OldPath string     `json:"oldPath"`
-	NewPath string     `json:"newPath"`
-	Hunks   []DiffHunk `json:"hunks"`
+	OldPath    string     `json:"oldPath"`
+	NewPath    string     `json:"newPath"`
+	Change     Change     `json:"change"`
+	Binary     bool       `json:"binary,omitempty"`
+	Similarity int        `json:"similarity,omitempty"`
+	OldMode    string     `json:"oldMode,omitempty"`
+	NewMode    string     `json:"newMode,omitempty"`
+	Hunks      []DiffHunk `json:"hunks"`
 }
 
 // parseUnifiedDiff parses `git diff`-style patch output (issue #24). The
@@ -64,6 +76,11 @@ func parseUnifiedDiff(data []byte) ([]FileDiff, error) {
 	}
 	if p.inHunk && (p.oldRem > 0 || p.newRem > 0) {
 		return nil, diffParseError("hunk truncated at end of output: " + p.hunk().Header)
+	}
+	for i := range p.files {
+		if p.files[i].Change == "" {
+			p.files[i].Change = ChangeModified
+		}
 	}
 	return p.files, nil
 }
@@ -98,15 +115,94 @@ func (p *diffParser) feed(line string) error {
 		if p.cur < 0 {
 			return diffParseError("file header outside any section: " + line)
 		}
-		dst, side := &p.file().OldPath, "a/"
+		f := p.file()
+		value := line[4:]
 		if line[0] == '+' {
-			dst, side = &p.file().NewPath, "b/"
+			return p.setPath(&f.NewPath, value, "b/", ChangeDeleted)
 		}
-		return p.setPath(dst, line[4:], side)
+		return p.setPath(&f.OldPath, value, "a/", ChangeAdded)
 	case strings.HasPrefix(line, "@@ "):
 		return p.startHunk(line)
-		// unrecognized header lines (index, mode, ...) fall through
+	default:
+		return p.feedExtended(line)
 	}
+	return nil
+}
+
+// extendedKeys are the section headers whose values the parser needs; any
+// other line between headers (index, zdiff, future keys) is ignored.
+var extendedKeys = []string{
+	"old mode ", "new mode ", "new file mode ", "deleted file mode ",
+	"similarity index ", "rename from ", "rename to ", "Binary files ",
+}
+
+func (p *diffParser) feedExtended(line string) error {
+	key := ""
+	for _, k := range extendedKeys {
+		if strings.HasPrefix(line, k) {
+			key = k
+			break
+		}
+	}
+	if key == "" {
+		return nil
+	}
+	if p.cur < 0 {
+		return diffParseError("extended header outside any section: " + line)
+	}
+	f, value := p.file(), line[len(key):]
+	switch key {
+	case "old mode ":
+		f.OldMode = value
+	case "new mode ":
+		f.NewMode = value
+	case "new file mode ":
+		f.NewMode, f.Change = value, ChangeAdded
+	case "deleted file mode ":
+		f.OldMode, f.Change = value, ChangeDeleted
+	case "similarity index ":
+		n, err := strconv.Atoi(strings.TrimSuffix(value, "%"))
+		if err != nil || n < 0 || n > 100 {
+			return diffParseError("malformed similarity index: " + line)
+		}
+		f.Similarity = n
+	case "rename from ":
+		path, err := unquoteGitPath(value)
+		if err != nil {
+			return err
+		}
+		f.OldPath, f.Change = path, ChangeRenamed
+	case "rename to ":
+		path, err := unquoteGitPath(value)
+		if err != nil {
+			return err
+		}
+		f.NewPath, f.Change = path, ChangeRenamed
+	case "Binary files ":
+		return p.setBinaryEndpoints(f, value)
+	}
+	return nil
+}
+
+// setBinaryEndpoints decodes "<old> and <new> differ". The grammar is
+// ambiguous when a raw name contains " and "; callers then fill the
+// requested path back in, which single-file diffs always know.
+func (p *diffParser) setBinaryEndpoints(f *FileDiff, body string) error {
+	if !strings.HasSuffix(body, " differ") {
+		return diffParseError("malformed binary files header: " + body)
+	}
+	left, right, ok := strings.Cut(strings.TrimSuffix(body, " differ"), " and ")
+	if !ok {
+		return diffParseError("malformed binary files header: " + body)
+	}
+	var err error
+	if f.OldPath, _, err = decodeEndpoint(left, "a/"); err != nil {
+		return err
+	}
+	if f.NewPath, _, err = decodeEndpoint(right, "b/"); err != nil {
+		return err
+	}
+	f.Binary = true
 	return nil
 }
 
@@ -226,17 +322,32 @@ func parseRange(text, header string) (start, count int, err error) {
 	return start, count, nil
 }
 
-// setPath decodes one endpoint of the file pair from a ---/+++ header. The
-// path may be followed by a TAB and timestamp; quoted form `"a/..."` is
-// used whenever the name contains characters git considers unusual.
-func (p *diffParser) setPath(dst *string, token, side string) error {
-	name, _, _ := strings.Cut(token, "\t")
-	path, err := unquoteGitPath(name)
+// setPath decodes one endpoint of the file pair from a ---/+++ header and
+// records /dev/null as the empty path with its matching Change. The path
+// may be followed by a TAB and timestamp; quoted form `"a/..."` is used
+// whenever the name contains characters git considers unusual.
+func (p *diffParser) setPath(dst *string, token, side string, onDevNull Change) error {
+	path, devNull, err := decodeEndpoint(token, side)
 	if err != nil {
 		return err
 	}
-	*dst = strings.TrimPrefix(path, side)
+	*dst = path
+	if devNull {
+		p.file().Change = onDevNull
+	}
 	return nil
+}
+
+func decodeEndpoint(token, side string) (path string, devNull bool, err error) {
+	name, _, _ := strings.Cut(token, "\t")
+	path, err = unquoteGitPath(name)
+	if err != nil {
+		return "", false, err
+	}
+	if path == devNullPath {
+		return "", true, nil
+	}
+	return strings.TrimPrefix(path, side), false, nil
 }
 
 // unquoteGitPath decodes git's C-style path quoting (core.quotePath): a

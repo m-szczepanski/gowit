@@ -42,6 +42,7 @@ func TestParseUnifiedDiffModify(t *testing.T) {
 	want := []FileDiff{{
 		OldPath: "a.txt",
 		NewPath: "a.txt",
+		Change:  ChangeModified,
 		Hunks: []DiffHunk{{
 			Header:   "@@ -1,10 +1,10 @@",
 			OldStart: 1, OldCount: 10, NewStart: 1, NewCount: 10,
@@ -266,6 +267,14 @@ func TestParseUnifiedDiffMalformed(t *testing.T) {
 		{"non-marker backslash line", []string{"@@ -1,2 +1,2 @@", "+x", `\x`}, false},
 		{"hunk header missing plus", []string{"@@ -1 2 @@"}, false},
 		{"new range non-numeric", []string{"@@ -1,1 +x,1 @@", " a"}, false},
+		{"garbage similarity", []string{"similarity index xx%"}, false},
+		{"binary line missing pair", []string{"Binary files onlyone differ"}, false},
+		{"binary line missing suffix", []string{"Binary files a/x and b/y"}, false},
+		{"extended header outside section", []string{"similarity index 90%"}, true},
+		{"rename from malformed quote", []string{`rename from "x\`}, false},
+		{"rename to malformed quote", []string{"rename from x", `rename to "y\`}, false},
+		{"binary endpoint malformed", []string{`Binary files "a/x\ and b/y differ`}, false},
+		{"binary right endpoint malformed", []string{`Binary files a/x and "b/y\ differ`}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -316,5 +325,137 @@ func TestUnquoteGitPath(t *testing.T) {
 		if got != tc.want {
 			t.Fatalf("unquote %q = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestParseUnifiedDiffAddedFile(t *testing.T) {
+	in := diffJoin(
+		"diff --git a/new.txt b/new.txt",
+		"new file mode 100644",
+		"index 0000000..b6fc4b6",
+		"--- /dev/null",
+		"+++ b/new.txt",
+		"@@ -0,0 +1 @@",
+		"+hello",
+	)
+	got, err := parseUnifiedDiff(in)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	f := got[0]
+	if f.Change != ChangeAdded || f.OldPath != "" || f.NewPath != "new.txt" || f.NewMode != "100644" {
+		t.Fatalf("got %+v, want added new.txt with mode 100644", f)
+	}
+}
+
+func TestParseUnifiedDiffDeletedFile(t *testing.T) {
+	in := diffJoin(
+		"diff --git a/gone.txt b/gone.txt",
+		"deleted file mode 100755",
+		"index b6fc4b6..0000000",
+		"--- a/gone.txt",
+		"+++ /dev/null",
+		"@@ -1 +0,0 @@",
+		"-hello",
+	)
+	got, err := parseUnifiedDiff(in)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	f := got[0]
+	if f.Change != ChangeDeleted || f.OldPath != "gone.txt" || f.NewPath != "" || f.OldMode != "100755" {
+		t.Fatalf("got %+v, want deleted gone.txt with mode 100755", f)
+	}
+}
+
+func TestParseUnifiedDiffEmptyAddedFileHasNoHunk(t *testing.T) {
+	// real shape for adding a zero-byte file: headers only, no @@, no /dev/null
+	in := diffJoin(
+		"diff --git a/empty.txt b/empty.txt",
+		"new file mode 100644",
+		"index 0000000..e69de29",
+	)
+	got, err := parseUnifiedDiff(in)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	f := got[0]
+	if f.Change != ChangeAdded || len(f.Hunks) != 0 {
+		t.Fatalf("got %+v, want added with zero hunks", f)
+	}
+}
+
+func TestParseUnifiedDiffRename(t *testing.T) {
+	in := diffJoin(
+		"diff --git a/c.txt b/renamed-c.txt",
+		"similarity index 100%",
+		"rename from c.txt",
+		"rename to renamed-c.txt",
+	)
+	got, err := parseUnifiedDiff(in)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	f := got[0]
+	if f.Change != ChangeRenamed || f.Similarity != 100 || f.OldPath != "c.txt" || f.NewPath != "renamed-c.txt" {
+		t.Fatalf("got %+v, want R100 c.txt -> renamed-c.txt", f)
+	}
+}
+
+func TestParseUnifiedDiffRenameWithEdit(t *testing.T) {
+	in := diffJoin(
+		"diff --git a/old.txt b/new.txt",
+		"similarity index 87%",
+		"rename from old.txt",
+		"rename to new.txt",
+		"--- a/old.txt",
+		"+++ b/new.txt",
+		"@@ -1,2 +1,2 @@",
+		" same",
+		"-content",
+		"+CONTENT",
+	)
+	got, err := parseUnifiedDiff(in)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	f := got[0]
+	if f.Change != ChangeRenamed || f.Similarity != 87 || f.OldPath != "old.txt" || f.NewPath != "new.txt" {
+		t.Fatalf("got %+v, want R87 old.txt -> new.txt", f)
+	}
+	if len(f.Hunks) != 1 || f.Hunks[0].Lines[2].Text != "CONTENT" {
+		t.Fatalf("hunks = %+v, want one edited hunk", f.Hunks)
+	}
+}
+
+func TestParseUnifiedDiffModeOnly(t *testing.T) {
+	in := diffJoin(
+		"diff --git a/new.txt b/new.txt",
+		"old mode 100644",
+		"new mode 100755",
+	)
+	got, err := parseUnifiedDiff(in)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	f := got[0]
+	if f.Change != ChangeModified || f.OldMode != "100644" || f.NewMode != "100755" || len(f.Hunks) != 0 {
+		t.Fatalf("got %+v, want mode-only modified with both modes and no hunks", f)
+	}
+}
+
+func TestParseUnifiedDiffBinary(t *testing.T) {
+	in := diffJoin(
+		"diff --git a/bin.dat b/bin.dat",
+		"index 4d15381..0f49c4a 100644",
+		"Binary files a/bin.dat and b/bin.dat differ",
+	)
+	got, err := parseUnifiedDiff(in)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	f := got[0]
+	if !f.Binary || f.OldPath != "bin.dat" || f.NewPath != "bin.dat" || len(f.Hunks) != 0 {
+		t.Fatalf("got %+v, want binary bin.dat with no hunks", f)
 	}
 }
