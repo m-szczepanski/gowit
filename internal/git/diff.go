@@ -474,6 +474,34 @@ func diffFileFromOutput(out []byte, path string) (*FileDiff, error) {
 	}
 }
 
+// DiffCommitFile returns the diff of one path within one commit, taken
+// against the commit's first parent. The merge decision (issue #24):
+// -m --first-parent. Plain `git show` of a merge prints the combined --cc
+// diff, which hides every file that matches any parent - side-branch
+// content disappears; plain -m repeats each file once per parent. A
+// first-parent view matches what history UIs show, and root commits fall
+// back to diffing against the empty tree. The single-path pathspec also
+// breaks git's rename pairing, so a renamed file renders as a full add
+// (new side) or delete (old side); DiffCommitFiles carries the R status.
+func (r *Repo) DiffCommitFile(ctx context.Context, hash, path string) (*FileDiff, error) {
+	if hash == "" || strings.HasPrefix(hash, "-") {
+		return nil, &GitError{Code: CodeValidationFailed, Message: "valid commit hash required", ExitCode: -1}
+	}
+	clean, err := cleanDiffPath(path)
+	if err != nil {
+		return nil, err
+	}
+	out, _, err := runGit(ctx, r.path, "show", "--format=", "-m", "--first-parent", "--no-ext-diff",
+		hash, "--", ":(literal)"+clean)
+	if err != nil {
+		return nil, err
+	}
+	if fd, err := diffFileFromOutput(out, clean); err != nil || fd != nil {
+		return fd, err
+	}
+	return unchangedFileDiff(clean), nil
+}
+
 func (r *Repo) isTracked(ctx context.Context, path string) (bool, error) {
 	_, _, err := runGit(ctx, r.path, "ls-files", "--error-unmatch", "--", ":(literal)"+path)
 	if err == nil {

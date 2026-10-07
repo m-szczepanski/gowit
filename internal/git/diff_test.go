@@ -452,3 +452,152 @@ func TestDiffFileFromOutput(t *testing.T) {
 		t.Fatalf("empty output: fd=%v err=%v, want nil,nil", fd, err)
 	}
 }
+
+func hashOf(t *testing.T, dir, ref string) string {
+	t.Helper()
+	out, _, err := runGit(context.Background(), dir, "rev-parse", ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// mergeRepo: main adds+edits, side adds s.txt; HEAD is the merge commit.
+func mergeRepo(t *testing.T) (dir, mergeHash, mainHash, rootHash string) {
+	t.Helper()
+	ctx := context.Background()
+	dir = initRepo(t)
+	writeFile(t, dir, "base.txt", "b\n")
+	commitAll(t, dir, "root")
+	rootHash = hashOf(t, dir, "HEAD")
+	runGit(ctx, dir, "checkout", "-qb", "side")
+	writeFile(t, dir, "s.txt", "side content\nline2\n")
+	commitAll(t, dir, "side add")
+	runGit(ctx, dir, "checkout", "-q", "main")
+	writeFile(t, dir, "base.txt", "B\n")
+	commitAll(t, dir, "main edit")
+	mainHash = hashOf(t, dir, "HEAD")
+	if _, _, err := runGit(ctx, dir, "merge", "side", "-m", "merged"); err != nil {
+		t.Fatal(err)
+	}
+	return dir, hashOf(t, dir, "HEAD"), mainHash, rootHash
+}
+
+func diffCommit(t *testing.T, dir, hash, path string) (*FileDiff, error) {
+	t.Helper()
+	return openRepo(t, dir).DiffCommitFile(context.Background(), hash, path)
+}
+
+func TestDiffCommitFileModify(t *testing.T) {
+	dir, _, mainHash, _ := mergeRepo(t)
+	fd, err := diffCommit(t, dir, mainHash, "base.txt")
+	if err != nil {
+		t.Fatalf("DiffCommitFile: %v", err)
+	}
+	if fd.Change != ChangeModified || fd.OldPath != "base.txt" || fd.NewPath != "base.txt" {
+		t.Fatalf("got %+v, want modified base.txt", fd)
+	}
+	lines := fd.Hunks[0].Lines
+	if len(lines) != 2 || lines[0] != (DiffLine{Type: DiffLineDel, OldNum: 1, Text: "b"}) ||
+		lines[1] != (DiffLine{Type: DiffLineAdd, NewNum: 1, Text: "B"}) {
+		t.Fatalf("lines = %+v, want del b / add B", lines)
+	}
+}
+
+func TestDiffCommitFileMergeFirstParent(t *testing.T) {
+	// s.txt came from the side branch: unchanged against HEAD^1, matching
+	// against HEAD^2. Plain combined (cc) show would hide it; the
+	// first-parent rule must surface the add.
+	dir, mergeHash, _, _ := mergeRepo(t)
+	fd, err := diffCommit(t, dir, mergeHash, "s.txt")
+	if err != nil {
+		t.Fatalf("DiffCommitFile: %v", err)
+	}
+	if fd.Change != ChangeAdded || fd.NewPath != "s.txt" || len(fd.Hunks) != 1 {
+		t.Fatalf("got %+v, want added s.txt with one hunk against first parent", fd)
+	}
+	if fd.Hunks[0].Header != "@@ -0,0 +1,2 @@" {
+		t.Fatalf("header = %q, want -0,0 +1,2", fd.Hunks[0].Header)
+	}
+}
+
+func TestDiffCommitFileRootCommit(t *testing.T) {
+	dir, _, _, rootHash := mergeRepo(t)
+	fd, err := diffCommit(t, dir, rootHash, "base.txt")
+	if err != nil {
+		t.Fatalf("DiffCommitFile: %v", err)
+	}
+	if fd.Change != ChangeAdded || fd.NewPath != "base.txt" || len(fd.Hunks) != 1 {
+		t.Fatalf("got %+v, want added base.txt against the empty tree", fd)
+	}
+}
+
+func TestDiffCommitFileUnchanged(t *testing.T) {
+	dir, _, mainHash, _ := mergeRepo(t)
+	fd, err := diffCommit(t, dir, mainHash, "s.txt") // not in this commit at all
+	if err != nil {
+		t.Fatalf("DiffCommitFile: %v", err)
+	}
+	if fd.Change != ChangeModified || len(fd.Hunks) != 0 || fd.OldPath != "s.txt" || fd.NewPath != "s.txt" {
+		t.Fatalf("got %+v, want unchanged s.txt", fd)
+	}
+}
+
+func TestDiffCommitFileRenameBreaksToPairSides(t *testing.T) {
+	// documents the pathspec decision: single-path filtering breaks git's
+	// rename pairing, so the new side renders as an add; the rename
+	// summary lives in DiffCommitFiles
+	ctx := context.Background()
+	dir := initRepo(t)
+	writeFile(t, dir, "f.txt", "same\ncontent\nacross\nthe rename\nboundary keeps it\nidentical\n")
+	commitAll(t, dir, "base")
+	runGit(ctx, dir, "mv", "f.txt", "g.txt")
+	commitAll(t, dir, "renamed")
+	hash := hashOf(t, dir, "HEAD")
+
+	added, err := diffCommit(t, dir, hash, "g.txt")
+	if err != nil {
+		t.Fatalf("DiffCommitFile new side: %v", err)
+	}
+	if added.Change != ChangeAdded || added.NewPath != "g.txt" || len(added.Hunks) != 1 {
+		t.Fatalf("new side = %+v, want full add of g.txt", added)
+	}
+	deleted, err := diffCommit(t, dir, hash, "f.txt")
+	if err != nil {
+		t.Fatalf("DiffCommitFile old side: %v", err)
+	}
+	if deleted.Change != ChangeDeleted || deleted.OldPath != "f.txt" {
+		t.Fatalf("old side = %+v, want full delete of f.txt", deleted)
+	}
+}
+
+func TestDiffCommitFileValidation(t *testing.T) {
+	dir, _, mainHash, _ := mergeRepo(t)
+	repo := openRepo(t, dir)
+
+	for _, hash := range []string{"", "-x"} {
+		if _, err := repo.DiffCommitFile(context.Background(), hash, "base.txt"); !errors.Is(err, ErrValidationFailed) {
+			t.Fatalf("hash %q: err = %v, want validation_failed", hash, err)
+		}
+	}
+	if _, err := repo.DiffCommitFile(context.Background(), mainHash, "../escape"); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("err = %v, want validation_failed", err)
+	}
+}
+
+func TestDiffCommitFileUnknownHash(t *testing.T) {
+	dir, _, _, _ := mergeRepo(t)
+	_, err := diffCommit(t, dir, "0000000000000000000000000000000000000000", "base.txt")
+	if !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want command_failed", err)
+	}
+}
+
+func TestDiffCommitFileCtxKill(t *testing.T) {
+	dir, _, mainHash, _ := mergeRepo(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := openRepo(t, dir).DiffCommitFile(ctx, mainHash, "base.txt"); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want timeout", err)
+	}
+}
