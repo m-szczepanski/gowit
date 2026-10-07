@@ -7,16 +7,53 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
 func commitHead(t *testing.T, dir, format string) string {
 	t.Helper()
-	out, err := exec.Command("git", "-C", dir, "log", "-1", "--format="+format).CombinedOutput()
+	return gitOut(t, dir, "log", "-1", "--format="+format)
+}
+
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 	if err != nil {
-		t.Fatalf("git log: %v: %s", err, out)
+		t.Fatalf("git %v: %v: %s", args, err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// hooksFire guards hook-dependent assertions: Git for Windows may decline
+// to run POSIX hooks created by tests, which would turn rejection tests
+// into successes with the wrong cause.
+func hooksFire(t *testing.T, dir string, repo *Repo) {
+	t.Helper()
+	marker := filepath.Join(dir, "hook-probe")
+	writeHook(t, dir, "pre-commit", "#!/bin/sh\ntouch '"+marker+"'\nexit 1\n")
+	addFile(t, dir, "probe.txt", "x\n")
+	err := repo.Commit(context.Background(), CommitOptions{Message: "probe"})
+	if _, statErr := os.Stat(marker); os.IsNotExist(statErr) {
+		t.Skip("git did not execute the probe hook in this environment")
+	}
+	if err == nil {
+		t.Fatal("probe hook exited 0 but should reject")
+	}
+	// leave no residue: later cases assert their own clean/dirty states
+	if _, rmErr := os.Stat(marker); rmErr == nil {
+		_ = os.Remove(marker)
+	}
+	// rm --cached works on an unborn branch, restore --staged cannot
+	if out, rmErr := exec.Command("git", "-C", dir, "rm", "--cached", "-q", "probe.txt").CombinedOutput(); rmErr != nil {
+		t.Fatalf("unstage probe: %v: %s", rmErr, out)
+	}
+	if rmErr := os.Remove(filepath.Join(dir, "probe.txt")); rmErr != nil {
+		t.Fatal(rmErr)
+	}
+	if rmErr := os.Remove(filepath.Join(dir, ".git", "hooks", "pre-commit")); rmErr != nil {
+		t.Fatal(rmErr)
+	}
 }
 
 func TestCommitRecordsStagedIndexWithConfiguredAuthor(t *testing.T) {
@@ -38,8 +75,9 @@ func TestCommitRecordsStagedIndexWithConfiguredAuthor(t *testing.T) {
 	if got := commitHead(t, dir, "%b"); !strings.Contains(got, "long body here") {
 		t.Fatalf("body = %q", got)
 	}
-	if got := commitHead(t, dir, "%an <%ae>"); got != "test <t@t>" {
-		t.Fatalf("author = %q, want the repo-configured identity", got)
+	wantAuthor := strings.TrimSpace(gitOut(t, dir, "config", "user.name")) + " <" + strings.TrimSpace(gitOut(t, dir, "config", "user.email")) + ">"
+	if got := commitHead(t, dir, "%an <%ae>"); got != wantAuthor {
+		t.Fatalf("author = %q, want repo-configured identity %q", got, wantAuthor)
 	}
 	// the staged file is in the tree
 	out, err := exec.Command("git", "-C", dir, "show", "--name-only", "--format=", "HEAD").CombinedOutput()
@@ -92,13 +130,14 @@ func writeHook(t *testing.T, dir, name, script string) {
 
 func TestCommitFailingPreCommitHook(t *testing.T) {
 	dir := initRepo(t)
-	writeHook(t, dir, "pre-commit", "#!/bin/sh\necho \"lint stage 1 ok\" >&2\necho \"FAILURE: trailing problem\" >&2\nexit 1\n")
-	addFile(t, dir, "a.txt", "x\n")
-
 	repo, err := Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	hooksFire(t, dir, repo)
+	writeHook(t, dir, "pre-commit", "#!/bin/sh\necho \"lint stage 1 ok\" >&2\necho \"FAILURE: trailing problem\" >&2\nexit 1\n")
+	addFile(t, dir, "a.txt", "x\n")
+
 	var streamed []string
 	err = repo.Commit(context.Background(), CommitOptions{Message: "nope", OnOutput: func(l string) { streamed = append(streamed, l) }})
 	if !errors.Is(err, ErrCommitRejected) {
@@ -117,10 +156,11 @@ func TestCommitFailingPreCommitHook(t *testing.T) {
 
 func TestCommitFailingCommitMsgHook(t *testing.T) {
 	dir := initRepo(t)
+	repo, _ := Open(dir)
+	hooksFire(t, dir, repo)
 	writeHook(t, dir, "commit-msg", "#!/bin/sh\necho 'subject must not contain nope' >&2\nexit 1\n")
 	addFile(t, dir, "a.txt", "x\n")
 
-	repo, _ := Open(dir)
 	err := repo.Commit(context.Background(), CommitOptions{Message: "nope"})
 	if !errors.Is(err, ErrCommitRejected) {
 		t.Fatalf("err = %v, want commit_rejected", err)
@@ -147,7 +187,7 @@ func TestCommitEmptyMessageFailsBeforeGit(t *testing.T) {
 	repo, _ := Open(dir)
 
 	err := repo.Commit(context.Background(), CommitOptions{Message: "   \n  "})
-	if !errors.Is(err, ErrValidation) {
+	if !errors.Is(err, ErrValidationFailed) {
 		t.Fatalf("err = %v, want validation_failed", err)
 	}
 	if !strings.Contains(err.Error(), "message required") {
@@ -193,10 +233,11 @@ func TestCommitNothingToCommitCases(t *testing.T) {
 
 func TestCommitHookAbortingSilentlyIsRejected(t *testing.T) {
 	dir := initRepo(t)
+	repo, _ := Open(dir)
+	hooksFire(t, dir, repo)
 	writeHook(t, dir, "pre-commit", "#!/bin/sh\nexit 1\n")
 	addFile(t, dir, "a.txt", "x\n")
 
-	repo, _ := Open(dir)
 	err := repo.Commit(context.Background(), CommitOptions{Message: "quiet"})
 	if !errors.Is(err, ErrCommitRejected) {
 		t.Fatalf("err = %v, want commit_rejected", err)
@@ -242,10 +283,11 @@ func TestCommitAmendWithoutHistoryStaysCommandFailed(t *testing.T) {
 
 func TestCommitTailTrimKeepsRecentHookOutput(t *testing.T) {
 	dir := initRepo(t)
+	repo, _ := Open(dir)
+	hooksFire(t, dir, repo)
 	writeHook(t, dir, "pre-commit", "#!/bin/sh\nfor i in $(seq 1 40); do echo \"line $i\" >&2; done\nexit 1\n")
 	addFile(t, dir, "a.txt", "x\n")
 
-	repo, _ := Open(dir)
 	var seen int
 	err := repo.Commit(context.Background(), CommitOptions{Message: "x", OnOutput: func(string) { seen++ }})
 	if !errors.Is(err, ErrCommitRejected) {
@@ -283,18 +325,36 @@ func TestClassifyCommitErrorPassesThroughNonGitErrors(t *testing.T) {
 	}
 }
 
-func TestActionableLineFallbacks(t *testing.T) {
-	cases := map[string]struct {
-		text string
-		want string
-	}{
-		"marker wins over preamble": {"On branch main\nstuff:\n\nmore\nnothing to commit, working tree clean\n", "nothing to commit, working tree clean"},
-		"first non-header fallback": {"On branch main\nSome other detail\n", "Some other detail"},
-		"single header line":        {"On branch main\n", "On branch main\n"},
+func TestLastNonEmptyLine(t *testing.T) {
+	if got := lastNonEmptyLine("a\nb\n\n"); got != "b" {
+		t.Fatalf("got %q", got)
 	}
-	for name, tc := range cases {
-		if got := actionableLine(tc.text); got != tc.want {
-			t.Fatalf("%s: got %q want %q", name, got, tc.want)
-		}
+	if got := lastNonEmptyLine(""); got != "" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestCommitBothStreamsRace(t *testing.T) {
+	// the hook hammers stdout and stderr concurrently so the two copier
+	// goroutines genuinely interleave; -race must stay quiet because
+	// Commit serializes onLine under its lock
+	dir := initRepo(t)
+	repo, _ := Open(dir)
+	hooksFire(t, dir, repo)
+	writeHook(t, dir, "pre-commit", "#!/bin/sh\nfor i in $(seq 1 200); do echo out $i; echo err $i >&2; done\nexit 1\n")
+	addFile(t, dir, "a.txt", "x\n")
+
+	var localMu sync.Mutex
+	count := 0
+	err := repo.Commit(context.Background(), CommitOptions{Message: "race", OnOutput: func(string) {
+		localMu.Lock()
+		count++
+		localMu.Unlock()
+	}})
+	if !errors.Is(err, ErrCommitRejected) {
+		t.Fatalf("err = %v", err)
+	}
+	if count < 400 {
+		t.Fatalf("OnOutput saw %d lines, want ~400 from both streams", count)
 	}
 }

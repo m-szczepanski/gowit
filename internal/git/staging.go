@@ -13,7 +13,7 @@ import (
 
 func pathsGuard(paths []string) error {
 	if len(paths) == 0 {
-		return &GitError{Code: CodeCommandFailed, Message: "at least one path required", ExitCode: -1}
+		return &GitError{Code: CodeValidationFailed, Message: "at least one path required", ExitCode: -1}
 	}
 	return nil
 }

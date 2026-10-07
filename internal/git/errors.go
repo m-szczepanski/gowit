@@ -44,18 +44,18 @@ func (e *GitError) Is(target error) bool {
 
 // Sentinels for errors.Is; the zero Message/ExitCode are placeholders, only Code participates in Is.
 var (
-	ErrNotARepository  = &GitError{Code: CodeNotARepository}
-	ErrBareRepository  = &GitError{Code: CodeBareRepository}
-	ErrPathMissing     = &GitError{Code: CodePathMissing}
-	ErrNoUpstream      = &GitError{Code: CodeNoUpstream}
-	ErrConflict        = &GitError{Code: CodeConflict}
-	ErrAuthFailed      = &GitError{Code: CodeAuthFailed}
-	ErrTimeout         = &GitError{Code: CodeTimeout}
-	ErrCommandFailed   = &GitError{Code: CodeCommandFailed}
-	ErrParseFailed     = &GitError{Code: CodeParseFailed}
-	ErrCommitRejected  = &GitError{Code: CodeCommitRejected}
-	ErrNothingToCommit = &GitError{Code: CodeNothingToCommit}
-	ErrValidation      = &GitError{Code: CodeValidationFailed}
+	ErrNotARepository   = &GitError{Code: CodeNotARepository}
+	ErrBareRepository   = &GitError{Code: CodeBareRepository}
+	ErrPathMissing      = &GitError{Code: CodePathMissing}
+	ErrNoUpstream       = &GitError{Code: CodeNoUpstream}
+	ErrConflict         = &GitError{Code: CodeConflict}
+	ErrAuthFailed       = &GitError{Code: CodeAuthFailed}
+	ErrTimeout          = &GitError{Code: CodeTimeout}
+	ErrCommandFailed    = &GitError{Code: CodeCommandFailed}
+	ErrParseFailed      = &GitError{Code: CodeParseFailed}
+	ErrCommitRejected   = &GitError{Code: CodeCommitRejected}
+	ErrNothingToCommit  = &GitError{Code: CodeNothingToCommit}
+	ErrValidationFailed = &GitError{Code: CodeValidationFailed}
 )
 
 // classify maps a failed run's combined output to a GitError. ctx completion
