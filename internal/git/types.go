@@ -68,6 +68,12 @@ func changeOf(f FileStatus) Change {
 	if code == '.' {
 		code = f.XY[1]
 	}
+	return changeFromLetter(code)
+}
+
+// changeFromLetter maps git's single-letter change status - the name-status
+// code and the porcelain XY code share it.
+func changeFromLetter(code byte) Change {
 	switch code {
 	case 'A':
 		return ChangeAdded

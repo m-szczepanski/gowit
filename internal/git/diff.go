@@ -11,10 +11,12 @@ import (
 	"strings"
 )
 
-// diffNoNewlineMarker is git's exact, locale-stable (we force LC_ALL=C)
-// end-of-hunk marker; a body line only reaches it when it matches whole.
+// devNullPath is the sentinel endpoint git prints for added and deleted
+// files in ---/+++ headers.
 const devNullPath = "/dev/null"
 
+// diffNoNewlineMarker is git's exact, locale-stable (we force LC_ALL=C)
+// end-of-hunk marker; a body line only reaches it when it matches whole.
 const diffNoNewlineMarker = `\ No newline at end of file`
 
 // DiffLineType classifies one line inside a hunk: unchanged context, an
@@ -602,7 +604,13 @@ func diffUntrackedFile(path, fullPath string) (*FileDiff, error) {
 		}
 		return nil, &GitError{Code: CodePathMissing, Message: path + " is not readable: " + err.Error(), ExitCode: -1}
 	}
-	fd := &FileDiff{NewPath: path, Change: ChangeAdded, Hunks: []DiffHunk{}}
+	// git records the exec bit as 100755 once the file is staged; mirror
+	// that here so the untracked view matches the staged view
+	mode := "100644"
+	if info, serr := os.Stat(fullPath); serr == nil && info.Mode()&0o111 != 0 {
+		mode = "100755"
+	}
+	fd := &FileDiff{NewPath: path, Change: ChangeAdded, NewMode: mode, Hunks: []DiffHunk{}}
 	// git's convert.c rule: only the first 8000 bytes decide binary-ness
 	if bytes.IndexByte(data[:min(len(data), 8000)], 0) >= 0 {
 		fd.Binary = true
@@ -695,7 +703,7 @@ func checkCommitHash(hash string) error {
 	// leading "-" would be swallowed as an option; argv passes verbatim but
 	// the option boundary still needs guarding
 	if hash == "" || strings.HasPrefix(hash, "-") {
-		return &GitError{Code: CodeValidationFailed, Message: "valid commit hash required", ExitCode: -1}
+		return &GitError{Code: CodeValidationFailed, Message: "commit hash required", ExitCode: -1}
 	}
 	return nil
 }
@@ -728,7 +736,7 @@ func parseNameStatusZ(out []byte) ([]nameStatusEntry, error) {
 		if status == "" {
 			return nil, diffParseError("empty name-status record")
 		}
-		e := nameStatusEntry{change: nameStatusChange(status[0])}
+		e := nameStatusEntry{change: changeFromLetter(status[0])}
 		if score := status[1:]; score != "" {
 			n, err := strconv.Atoi(score)
 			if err != nil {
@@ -753,25 +761,6 @@ func parseNameStatusZ(out []byte) ([]nameStatusEntry, error) {
 		res = append(res, e)
 	}
 	return res, nil
-}
-
-func nameStatusChange(letter byte) Change {
-	switch letter {
-	case 'A':
-		return ChangeAdded
-	case 'M':
-		return ChangeModified
-	case 'D':
-		return ChangeDeleted
-	case 'R':
-		return ChangeRenamed
-	case 'C':
-		return ChangeCopied
-	case 'T':
-		return ChangeTypeChanged
-	default:
-		return ChangeUnknown
-	}
 }
 
 type numstatEntry struct {

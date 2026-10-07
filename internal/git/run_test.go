@@ -141,6 +141,9 @@ func TestBuildGitCmdSetsWorkdirMachineFlagsAndEnv(t *testing.T) {
 		"-c", "color.branch=never",
 		"-c", "diff.noprefix=false",
 		"-c", "diff.mnemonicPrefix=false",
+		"-c", "diff.srcPrefix=a/",
+		"-c", "diff.dstPrefix=b/",
+		"-c", "diff.context=3",
 		"status", "--porcelain=v2"}
 	if len(cmd.Args) != len(wantArgs)+1 { // argv[0] is the binary path
 		t.Fatalf("cmd.Args = %q, want %q prefixed by git", cmd.Args, wantArgs)

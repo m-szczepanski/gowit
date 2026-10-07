@@ -18,7 +18,8 @@ import (
 // color.diff=always beats color.ui=never (git config precedence) and would
 // inject ANSI into parsed output. The diff prefix overrides keep "a/" and
 // "b/" in file headers regardless of user config, which parseUnifiedDiff
-// relies on.
+// relies on; the same reasoning pins the default context so hunk sizing is
+// ours to choose via WithContextLines, never the user's diff.context.
 func buildGitCmd(ctx context.Context, repoPath string, args ...string) *exec.Cmd {
 	machineArgs := append([]string{
 		"--no-pager",
@@ -28,6 +29,9 @@ func buildGitCmd(ctx context.Context, repoPath string, args ...string) *exec.Cmd
 		"-c", "color.branch=never",
 		"-c", "diff.noprefix=false",
 		"-c", "diff.mnemonicPrefix=false",
+		"-c", "diff.srcPrefix=a/",
+		"-c", "diff.dstPrefix=b/",
+		"-c", "diff.context=3",
 	}, args...)
 	cmd := exec.CommandContext(ctx, "git", machineArgs...)
 	// ctx done kills git; WaitDelay then caps how long we keep waiting for

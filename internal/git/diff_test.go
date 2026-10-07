@@ -854,3 +854,43 @@ func TestDiffCommitFileContextLines(t *testing.T) {
 		t.Fatalf("err = %v, want validation_failed", err)
 	}
 }
+
+func TestDiffWorkingFilePinsPrefixAndContextConfig(t *testing.T) {
+	dir := initRepo(t)
+	mkdir(t, dir, "sub")
+	writeFile(t, dir, "sub/x.txt", "1\n2\n3\n4\n5\n")
+	commitAll(t, dir, "base")
+	writeFile(t, dir, "sub/x.txt", "1\n2\nX\n4\n5\n")
+	gitConfig(t, dir, "diff.srcPrefix", "c/")
+	gitConfig(t, dir, "diff.dstPrefix", "w/")
+	gitConfig(t, dir, "diff.context", "0")
+
+	fd, err := diffWorking(t, dir, "sub/x.txt", false)
+	if err != nil {
+		t.Fatalf("DiffWorkingFile: %v", err)
+	}
+	if fd.OldPath != "sub/x.txt" || fd.NewPath != "sub/x.txt" {
+		t.Fatalf("paths = %q %q, want sub/x.txt despite custom prefixes", fd.OldPath, fd.NewPath)
+	}
+	if h := fd.Hunks[0]; h.OldCount != 5 {
+		t.Fatalf("hunk = %+v, want default 3 context lines despite diff.context=0", h)
+	}
+}
+
+func TestDiffWorkingFileUntrackedExecMode(t *testing.T) {
+	dir := initRepo(t)
+	writeFile(t, dir, "seed.txt", "s\n")
+	commitAll(t, dir, "base")
+	writeFile(t, dir, "run.sh", "#!/bin/sh\n")
+	if err := os.Chmod(filepath.Join(dir, "run.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	fd, err := diffWorking(t, dir, "run.sh", false)
+	if err != nil {
+		t.Fatalf("DiffWorkingFile: %v", err)
+	}
+	if fd.NewMode != "100755" {
+		t.Fatalf("NewMode = %q, want 100755 for the exec bit like a staged add reports", fd.NewMode)
+	}
+}
