@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -241,5 +242,81 @@ func TestBranchesCtxKill(t *testing.T) {
 	cancel()
 	if _, err := openRepo(t, seededBranches(t)).Branches(ctx, ScopeAll); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want timeout", err)
+	}
+}
+
+func TestBranchesMarksCurrent(t *testing.T) {
+	dir := seededBranches(t)
+	r := openRepo(t, dir)
+	all, err := r.Branches(context.Background(), ScopeAll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := 0
+	for _, b := range all {
+		if b.IsCurrent {
+			current++
+			if b.Name != "main" || !b.IsLocal {
+				t.Fatalf("IsCurrent on %+v, want local main only", b)
+			}
+		}
+	}
+	if current != 1 {
+		t.Fatalf("IsCurrent count = %d, want exactly 1 in %+v", current, all)
+	}
+}
+
+func TestBranchesDetachedHasNoCurrent(t *testing.T) {
+	dir := seededBranches(t)
+	gitOut(t, dir, "checkout", "-q", "--detach")
+	r := openRepo(t, dir)
+	all, err := r.Branches(context.Background(), ScopeAll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range all {
+		if b.IsCurrent {
+			t.Fatalf("IsCurrent set while detached: %+v", b)
+		}
+	}
+}
+
+func TestBranchesInvalidScope(t *testing.T) {
+	_, err := openRepo(t, seededBranches(t)).Branches(context.Background(), BranchScope(9))
+	if ge, ok := err.(*GitError); !ok || ge.Code != CodeParseFailed {
+		t.Fatalf("err = %v, want parse_failed", err)
+	}
+}
+
+func TestCurrentBranch(t *testing.T) {
+	ctx := context.Background()
+	dir := seededBranches(t)
+	r := openRepo(t, dir)
+	name, err := r.currentBranch(ctx)
+	if err != nil || name != "main" {
+		t.Fatalf("currentBranch = %q, %v; want main", name, err)
+	}
+	gitOut(t, dir, "checkout", "-q", "--detach")
+	name, err = r.currentBranch(ctx)
+	if err != nil || name != "" {
+		t.Fatalf("detached currentBranch = %q, %v; want empty", name, err)
+	}
+}
+
+func TestCurrentBranchUnreadableHead(t *testing.T) {
+	skipWithoutUnixPerms(t)
+	r := openRepo(t, seededBranches(t))
+	head := filepath.Join(r.path, ".git", "HEAD")
+	if err := os.Chmod(head, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(head, 0o644) })
+	_, err := r.currentBranch(context.Background())
+	ge, ok := err.(*GitError)
+	if !ok {
+		t.Fatalf("err = %v, want GitError", err)
+	}
+	if ge.ExitCode == 1 {
+		t.Fatalf("unreadable HEAD mapped to detached: %+v", ge)
 	}
 }

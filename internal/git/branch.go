@@ -37,7 +37,7 @@ type Branch struct {
 const branchFormat = "%(refname)%00%(objectname)%00%(upstream:short)%00%(upstream:track)%00%(subject)%00%(committerdate:unix)"
 
 // Branches lists refs in the chosen scope, sorted by full ref name the way
-// for-each-ref sorts. IsCurrent is not resolved here.
+// for-each-ref sorts, and marks the checked-out local branch as current.
 func (r *Repo) Branches(ctx context.Context, scope BranchScope) ([]Branch, error) {
 	args := []string{"for-each-ref", "--format=" + branchFormat}
 	switch scope {
@@ -54,7 +54,31 @@ func (r *Repo) Branches(ctx context.Context, scope BranchScope) ([]Branch, error
 	if err != nil {
 		return nil, err
 	}
-	return parseBranchRecords(string(out))
+	branches, err := parseBranchRecords(string(out))
+	if err != nil {
+		return nil, err
+	}
+	name, err := r.currentBranch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range branches {
+		branches[i].IsCurrent = branches[i].IsLocal && branches[i].Name == name
+	}
+	return branches, nil
+}
+
+// currentBranch returns the checked-out branch's short name, or "" when
+// HEAD is detached. symbolic-ref exits 1 exactly for the detached case.
+func (r *Repo) currentBranch(ctx context.Context) (string, error) {
+	out, _, err := runGit(ctx, r.path, "symbolic-ref", "-q", "--short", "HEAD")
+	if err != nil {
+		if ge, ok := err.(*GitError); ok && ge.ExitCode == 1 {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func parseBranchRecords(out string) ([]Branch, error) {
