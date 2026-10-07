@@ -141,3 +141,26 @@ func (r *Repo) Capabilities(ctx context.Context) (*Capabilities, error) {
 	}
 	return c, nil
 }
+
+// SetUpstream points branch at remote/remoteBranch, the explicit form
+// of the --set-upstream offer the disabled-toolbar state surfaces. The
+// upstream ref must already exist locally (fetched or pushed); git
+// refuses otherwise and the failure surfaces as command_failed.
+func (r *Repo) SetUpstream(ctx context.Context, branch, remote, remoteBranch string) error {
+	for _, v := range []struct {
+		label, value string
+	}{
+		{"branch", branch},
+		{"remote", remote},
+		{"remote branch", remoteBranch},
+	} {
+		if v.value == "" {
+			return &GitError{Code: CodeValidationFailed, Message: v.label + " required", ExitCode: -1}
+		}
+		if err := guardOptionLike(v.value, v.label); err != nil {
+			return err
+		}
+	}
+	_, _, err := runGit(ctx, r.path, "branch", "--set-upstream-to="+remote+"/"+remoteBranch, branch)
+	return err
+}

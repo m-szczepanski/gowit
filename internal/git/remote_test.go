@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -222,6 +223,75 @@ func TestCapabilities(t *testing.T) {
 	kctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := openRepo(t, dir).Capabilities(kctx); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want timeout", err)
+	}
+}
+
+func TestSetUpstreamPersists(t *testing.T) {
+	ctx := context.Background()
+	dir := initRepo(t)
+	writeFile(t, dir, "f.txt", "x\n")
+	commitAll(t, dir, "c")
+	runGit(ctx, dir, "init", "-q", "--bare", "../origin.git")
+	addRemote(t, dir, "origin", "../origin.git")
+	// push without -u: the remote-tracking ref exists, no tracking yet
+	if _, _, err := runGit(ctx, dir, "push", "-q", "origin", "main"); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if _, err := openRepo(t, dir).Upstream(ctx, "main"); !errors.Is(err, ErrNoUpstream) {
+		t.Fatalf("before: err = %v, want no_upstream", err)
+	}
+
+	repo := openRepo(t, dir)
+	if err := repo.SetUpstream(ctx, "main", "origin", "main"); err != nil {
+		t.Fatalf("SetUpstream: %v", err)
+	}
+	up, err := repo.Upstream(ctx, "main")
+	if err != nil {
+		t.Fatalf("Upstream after: %v", err)
+	}
+	if up != (Upstream{Ref: "origin/main", Remote: "origin", Branch: "main"}) {
+		t.Fatalf("got %+v, want origin/main", up)
+	}
+	// persisted in config, not just resolvable in memory
+	out, _, err := runGit(ctx, dir, "config", "--get", "branch.main.remote")
+	if err != nil || strings.TrimSpace(string(out)) != "origin" {
+		t.Fatalf("branch.main.remote = %q err %v, want origin", out, err)
+	}
+	caps, err := repo.Capabilities(ctx)
+	if err != nil || !caps.CanPush || !caps.CanPull || caps.Reason != "" {
+		t.Fatalf("caps = %+v err %v, want push/pull enabled after set-upstream", caps, err)
+	}
+}
+
+func TestSetUpstreamErrors(t *testing.T) {
+	ctx := context.Background()
+	dir := trackedRepo(t)
+	repo := openRepo(t, dir)
+
+	if err := repo.SetUpstream(ctx, "ghost", "origin", "main"); !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("missing branch: err = %v, want command_failed", err)
+	}
+	if err := repo.SetUpstream(ctx, "main", "origin", "absent"); !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("missing upstream ref: err = %v, want command_failed", err)
+	}
+	cases := [][3]string{
+		{"", "origin", "main"},
+		{"main", "", "main"},
+		{"main", "origin", ""},
+		{"-x", "origin", "main"},
+		{"main", "-o", "main"},
+		{"main", "origin", "-m"},
+	}
+	for _, c := range cases {
+		if err := repo.SetUpstream(ctx, c[0], c[1], c[2]); !errors.Is(err, ErrValidationFailed) {
+			t.Fatalf("args %q: err = %v, want validation_failed", c, err)
+		}
+	}
+
+	kctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := repo.SetUpstream(kctx, "main", "origin", "main"); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want timeout", err)
 	}
 }
