@@ -2,6 +2,7 @@ package git
 
 import (
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -125,5 +126,142 @@ func TestParseLogOutputEmpty(t *testing.T) {
 	got, err := parseLogOutput(nil)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("got %+v err %v, want empty", got, err)
+	}
+}
+
+// TestParseLogOutputFixtures round-trips issue #23's acceptance case:
+// testdata/log_linear.log and log_merges.log captured verbatim from
+// `git log --decorate=short --format=<logFormat>` over real repos (tag +
+// fake origin ref for decorations, unicode multi-line body, merge,
+// octopus and empty commits). Expectations are hand-transcribed from the
+// fixture bytes.
+func TestParseLogOutputFixtures(t *testing.T) {
+	cases := []struct {
+		file string
+		want []Commit
+	}{
+		{"log_linear.log", []Commit{
+			{
+				Hash: "3b94f0f874a7a79b3d1fdbc3ba540f8ee83854db", ShortHash: "3b94f0f",
+				ParentHashes:  []string{"1459c2170e3c4d8e95c47e157cd659eeeb3c33f6"},
+				AuthorName:    "test",
+				AuthorEmail:   "t@t",
+				AuthorDate:    time.Unix(1768221000, 0).UTC(),
+				CommitterDate: time.Unix(1768221060, 0).UTC(),
+				Subject:       "third commit",
+				Body:          "",
+				Refs:          []Ref{{Kind: RefHead, Name: "main"}, {Kind: RefRemote, Name: "origin/main"}},
+			},
+			{
+				Hash: "1459c2170e3c4d8e95c47e157cd659eeeb3c33f6", ShortHash: "1459c21",
+				ParentHashes:  []string{"a87fb1c516caf09108aaad53ca3914d2f13be00b"},
+				AuthorName:    "test",
+				AuthorEmail:   "t@t",
+				AuthorDate:    time.Unix(1768125600, 0).UTC(),
+				CommitterDate: time.Unix(1768125600, 0).UTC(),
+				Subject:       "second commit",
+				Body:          "",
+				Refs:          []Ref{},
+			},
+			{
+				Hash:          "a87fb1c516caf09108aaad53ca3914d2f13be00b",
+				ShortHash:     "a87fb1c",
+				ParentHashes:  []string{},
+				AuthorName:    "test",
+				AuthorEmail:   "t@t",
+				AuthorDate:    time.Unix(1768032000, 0).UTC(),
+				CommitterDate: time.Unix(1768032300, 0).UTC(),
+				Subject:       "initial commit ✨",
+				Body:          "multi\nline body\nzażółta gęśl, jaźń",
+				Refs:          []Ref{{Kind: RefTag, Name: "v0.9"}},
+			},
+		}},
+		{"log_merges.log", []Commit{
+			{
+				Hash: "4553fdd71a4a592a32dd44375827600cdcb20cca", ShortHash: "4553fdd",
+				ParentHashes: []string{
+					"a84b1bee224e83b6286dde845d3da3a15855ebe2",
+					"a5f7109a90c3fba469aa303eb2b057266517c771",
+					"3fb269dbc57ced6a3ee99bf6fe25660741bca4eb",
+				},
+				AuthorName: "test", AuthorEmail: "t@t",
+				AuthorDate: time.Unix(1791377697, 0).UTC(), CommitterDate: time.Unix(1791377697, 0).UTC(),
+				Subject: "octopus", Body: "",
+				Refs: []Ref{{Kind: RefHead, Name: "main"}},
+			},
+			{
+				Hash: "a84b1bee224e83b6286dde845d3da3a15855ebe2", ShortHash: "a84b1be",
+				ParentHashes: []string{
+					"b240ac73abf68ede276bbedd3c9bb32a2095228e",
+					"ee810c5b86dababa63a602f3606098c3dcdfe6ac",
+				},
+				AuthorName: "test", AuthorEmail: "t@t",
+				AuthorDate: time.Unix(1791377697, 0).UTC(), CommitterDate: time.Unix(1791377697, 0).UTC(),
+				Subject: "two-parent", Body: "", Refs: []Ref{},
+			},
+			{
+				Hash: "b240ac73abf68ede276bbedd3c9bb32a2095228e", ShortHash: "b240ac7",
+				ParentHashes:  []string{"b00d58f1272b9dfd038de9cb719cd9f6f3982706"},
+				AuthorName:    "test",
+				AuthorEmail:   "t@t",
+				AuthorDate:    time.Unix(1769925600, 0).UTC(),
+				CommitterDate: time.Unix(1769925600, 0).UTC(),
+				Subject:       "empty commit", Body: "", Refs: []Ref{},
+			},
+			{
+				Hash: "3fb269dbc57ced6a3ee99bf6fe25660741bca4eb", ShortHash: "3fb269d",
+				ParentHashes:  []string{"b00d58f1272b9dfd038de9cb719cd9f6f3982706"},
+				AuthorName:    "test",
+				AuthorEmail:   "t@t",
+				AuthorDate:    time.Unix(1769914800, 0).UTC(),
+				CommitterDate: time.Unix(1769914800, 0).UTC(),
+				Subject:       "side 3", Body: "",
+				Refs: []Ref{{Kind: RefBranch, Name: "s3"}},
+			},
+			{
+				Hash: "a5f7109a90c3fba469aa303eb2b057266517c771", ShortHash: "a5f7109",
+				ParentHashes:  []string{"b00d58f1272b9dfd038de9cb719cd9f6f3982706"},
+				AuthorName:    "test",
+				AuthorEmail:   "t@t",
+				AuthorDate:    time.Unix(1769911200, 0).UTC(),
+				CommitterDate: time.Unix(1769911200, 0).UTC(),
+				Subject:       "side 2", Body: "",
+				Refs: []Ref{{Kind: RefBranch, Name: "s2"}},
+			},
+			{
+				Hash: "ee810c5b86dababa63a602f3606098c3dcdfe6ac", ShortHash: "ee810c5",
+				ParentHashes:  []string{"b00d58f1272b9dfd038de9cb719cd9f6f3982706"},
+				AuthorName:    "test",
+				AuthorEmail:   "t@t",
+				AuthorDate:    time.Unix(1769907600, 0).UTC(),
+				CommitterDate: time.Unix(1769907600, 0).UTC(),
+				Subject:       "side 1", Body: "",
+				Refs: []Ref{{Kind: RefBranch, Name: "s1"}},
+			},
+			{
+				Hash: "b00d58f1272b9dfd038de9cb719cd9f6f3982706", ShortHash: "b00d58f",
+				ParentHashes:  []string{},
+				AuthorName:    "test",
+				AuthorEmail:   "t@t",
+				AuthorDate:    time.Unix(1769904000, 0).UTC(),
+				CommitterDate: time.Unix(1769904000, 0).UTC(),
+				Subject:       "base", Body: "", Refs: []Ref{},
+			},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			data, err := os.ReadFile("testdata/" + tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := parseLogOutput(data)
+			if err != nil {
+				t.Fatalf("parse %s: %v", tc.file, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got  %+v\nwant %+v", got, tc.want)
+			}
+		})
 	}
 }
