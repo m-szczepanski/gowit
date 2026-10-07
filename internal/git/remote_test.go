@@ -107,10 +107,10 @@ func TestUpstream(t *testing.T) {
 	dir := initRepo(t)
 	writeFile(t, dir, "f.txt", "x\n")
 	commitAll(t, dir, "c")
-	if _, _, err := runGit(ctx, dir, "init", "-q", "--bare", "../origin.git"); err != nil {
+	if _, _, err := runGit(ctx, dir, "init", "-q", "--bare", "origin.git"); err != nil {
 		t.Fatal(err)
 	}
-	addRemote(t, dir, "origin", "../origin.git")
+	addRemote(t, dir, "origin", "origin.git")
 	if _, _, err := runGit(ctx, dir, "push", "-q", "-u", "origin", "main"); err != nil {
 		t.Fatalf("push -u: %v", err)
 	}
@@ -181,8 +181,10 @@ func trackedRepo(t *testing.T) (dir string) {
 	dir = initRepo(t)
 	writeFile(t, dir, "f.txt", "x\n")
 	commitAll(t, dir, "c")
-	runGit(ctx, dir, "init", "-q", "--bare", "../origin.git")
-	addRemote(t, dir, "origin", "../origin.git")
+	// inside the repo dir: sibling t.TempDir() calls share a parent, so a
+	// "../origin.git" path would collide between two trackedRepo calls
+	runGit(ctx, dir, "init", "-q", "--bare", "origin.git")
+	addRemote(t, dir, "origin", "origin.git")
 	if _, _, err := runGit(ctx, dir, "push", "-q", "-u", "origin", "main"); err != nil {
 		t.Fatalf("push -u: %v", err)
 	}
@@ -247,8 +249,8 @@ func TestSetUpstreamPersists(t *testing.T) {
 	dir := initRepo(t)
 	writeFile(t, dir, "f.txt", "x\n")
 	commitAll(t, dir, "c")
-	runGit(ctx, dir, "init", "-q", "--bare", "../origin.git")
-	addRemote(t, dir, "origin", "../origin.git")
+	runGit(ctx, dir, "init", "-q", "--bare", "origin.git")
+	addRemote(t, dir, "origin", "origin.git")
 	// push without -u: the remote-tracking ref exists, no tracking yet
 	if _, _, err := runGit(ctx, dir, "push", "-q", "origin", "main"); err != nil {
 		t.Fatalf("push: %v", err)
@@ -396,7 +398,8 @@ func TestRemoteTrackingMatrix(t *testing.T) {
 		t.Fatalf("two remotes = %+v err %v, want [fork, origin]", remotes, err)
 	}
 
-	// tracking config that names a remote branch we have never fetched
+	// tracking config that names a remote branch we have never fetched:
+	// rev-parse fails, while porcelain v2 keeps echoing the config
 	runGit(ctx, work, "branch", "dangle")
 	gitConfig(t, work, "branch.dangle.remote", "origin")
 	if _, _, err := runGit(ctx, work, "config", "branch.dangle.merge", "refs/heads/never-fetched"); err != nil {
@@ -405,6 +408,16 @@ func TestRemoteTrackingMatrix(t *testing.T) {
 	if _, err := repo.Upstream(ctx, "dangle"); !errors.Is(err, ErrCommandFailed) {
 		t.Fatalf("dangling tracking: err = %v, want command_failed (config exists, ref does not)", err)
 	}
+	// on the checked-out branch the same dangling config makes
+	// Capabilities report push/pull per git's own rules: push/pull
+	// resolve the config live, so the capability stays enabled even
+	// though Upstream() cannot name the target yet
+	runGit(ctx, work, "checkout", "-q", "dangle")
+	caps, err = repo.Capabilities(ctx)
+	if err != nil || !caps.CanPush || !caps.CanPull || caps.Upstream != "origin/never-fetched" || caps.Reason != "" {
+		t.Fatalf("dangling caps on current branch = %+v err %v, want config-based push/pull enabled", caps, err)
+	}
+	runGit(ctx, work, "checkout", "-q", "main")
 
 	// detached HEAD: fetch stays available, push/pull drop out
 	runGit(ctx, work, "checkout", "-q", "--detach", "main")

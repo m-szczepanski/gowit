@@ -6,7 +6,9 @@ import (
 )
 
 // Remote is one configured remote with the URLs git would use for each
-// direction. A remote configured only for pushing has an empty FetchURL.
+// direction. Mirror-style remotes listing several URLs per direction
+// report the first. A remote configured only for pushing has an empty
+// FetchURL.
 type Remote struct {
 	Name     string `json:"name"`
 	FetchURL string `json:"fetchUrl,omitempty"`
@@ -29,7 +31,7 @@ func (r *Repo) Remotes(ctx context.Context) ([]Remote, error) {
 // belong to mirror setups outside the app's scope.
 func parseRemoteV(out string) ([]Remote, error) {
 	list := []Remote{}
-	at := map[string]int{}
+	nameIndex := map[string]int{}
 	for _, line := range strings.Split(out, "\n") {
 		if line == "" {
 			continue
@@ -54,9 +56,9 @@ func parseRemoteV(out string) ([]Remote, error) {
 		if url == "" {
 			continue
 		}
-		i, seen := at[name]
+		i, seen := nameIndex[name]
 		if !seen {
-			at[name] = len(list)
+			nameIndex[name] = len(list)
 			list = append(list, Remote{Name: name})
 			i = len(list) - 1
 		}
@@ -112,9 +114,11 @@ const (
 	IssueNoUpstream   CapabilityIssue = "no_upstream"
 )
 
-// Capabilities is the toolbar state for the current branch: the
-// porcelain v2 branch block already resolves detached HEAD and the
-// upstream of the checked-out branch, so no extra plumbing is needed.
+// Capabilities is the toolbar state for the current branch, assembled
+// from git status and git remote -v with no extra plumbing. Upstream
+// echoes the tracking configuration even when the remote-tracking ref
+// has not been fetched yet, matching git's own push/pull behavior, which
+// resolves that config live; Upstream() is the strict, resolvable view.
 type Capabilities struct {
 	Detached   bool            `json:"detached"`
 	HasRemotes bool            `json:"hasRemotes"`
