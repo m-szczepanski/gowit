@@ -248,3 +248,57 @@ func TestLogUnbornWithAllIsEmpty(t *testing.T) {
 		t.Fatalf("got %+v err %v, want empty", commits, err)
 	}
 }
+
+func TestCommitChangedFiles(t *testing.T) {
+	ctx := context.Background()
+	dir := initRepo(t)
+	writeFile(t, dir, "a.txt", "one\n")
+	writeFile(t, dir, "g.txt", "rename source content\nkept\nacross\nthe boundary\n")
+	writeFile(t, dir, "del.txt", "bye\n")
+	commitAll(t, dir, "root")
+	writeFile(t, dir, "a.txt", "two\n")
+	runGit(ctx, dir, "mv", "g.txt", "h.txt")
+	runGit(ctx, dir, "rm", "del.txt")
+	commitAll(t, dir, "changes")
+
+	repo := openRepo(t, dir)
+	files, err := repo.CommitChangedFiles(ctx, hashOf(t, dir, "HEAD"))
+	if err != nil {
+		t.Fatalf("CommitChangedFiles: %v", err)
+	}
+	m := map[string]CommitFileStat{}
+	for _, f := range files {
+		m[f.Path] = f
+	}
+	if len(files) != 3 || len(m) != 3 {
+		t.Fatalf("got %+v, want three entries", files)
+	}
+	if s := m["a.txt"]; s.Change != ChangeModified {
+		t.Fatalf("a.txt = %+v, want modified", s)
+	}
+	if s := m["del.txt"]; s.Change != ChangeDeleted {
+		t.Fatalf("del.txt = %+v, want deleted", s)
+	}
+	if s := m["h.txt"]; s.Change != ChangeRenamed || s.OldPath != "g.txt" || s.Similarity != 100 {
+		t.Fatalf("h.txt = %+v, want R100 of g.txt", s)
+	}
+
+	// same first-parent rule as DiffCommitFile/DiffCommitFiles
+	mdir, mergeHash, _, _ := mergeRepo(t)
+	files, err = openRepo(t, mdir).CommitChangedFiles(ctx, mergeHash)
+	if err != nil || len(files) != 1 || files[0].Change != ChangeAdded || files[0].Path != "s.txt" {
+		t.Fatalf("merge = %+v err %v, want only s.txt added", files, err)
+	}
+
+	if _, err := repo.CommitChangedFiles(ctx, ""); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("err = %v, want validation_failed", err)
+	}
+	if _, err := repo.CommitChangedFiles(ctx, "nope-not-a-ref"); !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want command_failed", err)
+	}
+	kctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := repo.CommitChangedFiles(kctx, "HEAD"); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want timeout", err)
+	}
+}

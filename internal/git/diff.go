@@ -667,10 +667,27 @@ func (r *Repo) DiffCommitFiles(ctx context.Context, hash string) ([]CommitFileSt
 	return parseCommitFileStats(raws[0], raws[1])
 }
 
+// changedFilesFromStatus converts a NUL-parsed --name-status stream into
+// summary entries; counts and binary flags stay zero until
+// parseCommitFileStats joins the numstat pass.
+func changedFilesFromStatus(out []byte) ([]CommitFileStat, error) {
+	statuses, err := parseNameStatusZ(out)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]CommitFileStat, 0, len(statuses))
+	for _, st := range statuses {
+		files = append(files, CommitFileStat{
+			Change: st.change, Path: st.path, OldPath: st.oldPath, Similarity: st.similarity,
+		})
+	}
+	return files, nil
+}
+
 // parseCommitFileStats joins the two decoded show passes; a status record
 // without its numstat counterpart means git output was cut short.
 func parseCommitFileStats(namesOut, countsOut []byte) ([]CommitFileStat, error) {
-	statuses, err := parseNameStatusZ(namesOut)
+	stats, err := changedFilesFromStatus(namesOut)
 	if err != nil {
 		return nil, err
 	}
@@ -678,16 +695,12 @@ func parseCommitFileStats(namesOut, countsOut []byte) ([]CommitFileStat, error) 
 	if err != nil {
 		return nil, err
 	}
-	stats := make([]CommitFileStat, 0, len(statuses))
-	for _, st := range statuses {
-		cn, ok := counts[st.path]
+	for i := range stats {
+		cn, ok := counts[stats[i].Path]
 		if !ok {
-			return nil, parseFailed("numstat record missing for " + st.path)
+			return nil, parseFailed("numstat record missing for " + stats[i].Path)
 		}
-		stats = append(stats, CommitFileStat{
-			Change: st.change, Path: st.path, OldPath: st.oldPath,
-			Similarity: st.similarity, Binary: cn.binary, Added: cn.added, Deleted: cn.deleted,
-		})
+		stats[i].Binary, stats[i].Added, stats[i].Deleted = cn.binary, cn.added, cn.deleted
 	}
 	return stats, nil
 }

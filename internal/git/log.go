@@ -213,3 +213,19 @@ func clip(s string) string {
 	}
 	return s[:n] + "..."
 }
+
+// CommitChangedFiles lists the paths one commit touched against its first
+// parent (same merge rule as the diff methods), with git status letters
+// and rename scores. Cheap single-pass sibling of DiffCommitFiles:
+// Added/Deleted/Binary stay zero because the numstat pass is skipped -
+// the changed-files list (#30) needs names, not counts.
+func (r *Repo) CommitChangedFiles(ctx context.Context, hash string) ([]CommitFileStat, error) {
+	if err := checkCommitHash(hash); err != nil {
+		return nil, err
+	}
+	out, err := r.showZ(ctx, hash, "--name-status", "-M")
+	if err != nil {
+		return nil, err
+	}
+	return changedFilesFromStatus(out)
+}
