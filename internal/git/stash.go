@@ -48,6 +48,8 @@ type StashEntry struct {
 	Date    time.Time `json:"date"`
 }
 
+// stash list is a log-family command: %x00 is the NUL escape there,
+// while for-each-ref needs %00.
 const stashListFormat = "%gd%x00%gs%x00%ct"
 
 // StashList returns the entries newest first, the order git maintains.
@@ -157,8 +159,8 @@ func stashRef(idx int) (string, error) {
 // CONFLICT) to ErrStashConflict; the untracked-collision failure already
 // arrives classified from classify.
 func stashConflict(err error) error {
-	if errors.Is(err, ErrConflict) {
-		ge := err.(*GitError)
+	var ge *GitError
+	if errors.As(err, &ge) && ge.Code == CodeConflict {
 		return &GitError{Code: CodeStashConflict, Message: ge.Message, ExitCode: ge.ExitCode}
 	}
 	return err

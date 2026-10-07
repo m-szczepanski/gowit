@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// stashedRepo: one commit, then a tracked edit plus two untracked files
-// (a.txt dirty, b.txt to be carried, c.txt to stay behind).
+// stashedRepo: one commit (a.txt, keep.txt), then one tracked edit (a.txt
+// dirty) and one untracked file (b.txt).
 func stashedRepo(t *testing.T) string {
 	t.Helper()
 	dir := initRepo(t)
@@ -411,5 +411,31 @@ func TestParseStashListNormal(t *testing.T) {
 	}
 	if !reflect.DeepEqual(list, want) {
 		t.Fatalf("got %+v, want %+v", list, want)
+	}
+}
+
+func TestStashListUnborn(t *testing.T) {
+	list, err := openRepo(t, initRepo(t)).StashList(context.Background())
+	if err != nil {
+		t.Fatalf("StashList on unborn HEAD: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("got %+v, want none", list)
+	}
+}
+
+func TestStashPushPathspecUntrackedWithoutFlagFailsAsCommand(t *testing.T) {
+	ctx := context.Background()
+	dir := stashedRepo(t)
+	r := openRepo(t, dir)
+	err := r.StashPush(ctx, StashPushOptions{Paths: []string{"a.txt", "b.txt"}})
+	if !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want command_failed (git does not guess untracked pathspecs)", err)
+	}
+	if got := fileContent(t, dir, "b.txt"); got != "untracked\n" {
+		t.Fatalf("failed push must leave the work tree untouched, b.txt = %q", got)
+	}
+	if out := gitOut(t, dir, "stash", "list"); out != "" {
+		t.Fatalf("stash list = %q, want nothing stashed", out)
 	}
 }
