@@ -38,8 +38,13 @@ const branchFormat = "%(refname)%00%(objectname)%00%(upstream:short)%00%(upstrea
 
 // Branches lists refs in the chosen scope, sorted by full ref name the way
 // for-each-ref sorts, and marks the checked-out local branch as current.
+// Remote HEAD aliases (origin/HEAD) are left out.
 func (r *Repo) Branches(ctx context.Context, scope BranchScope) ([]Branch, error) {
-	args := []string{"for-each-ref", "--format=" + branchFormat}
+	args := []string{"for-each-ref", "--format=" + branchFormat,
+		// origin/HEAD is a symref alias for the default branch, not a
+		// branch; listing it as one duplicates origin/main.
+		"--exclude=refs/remotes/*/HEAD",
+	}
 	switch scope {
 	case BranchScopeLocal:
 		args = append(args, "refs/heads")

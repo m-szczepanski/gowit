@@ -15,7 +15,7 @@ import (
 // main synced with origin, feature/a ahead 1 and behind 1, noUp local with
 // no upstream, solo remote-only, gone tracked but deleted on origin and
 // pruned from refs/remotes. Returns the clone dir.
-func seededBranches(t *testing.T) (dir string) {
+func seededBranches(t *testing.T) (dir, second string) {
 	t.Helper()
 	tmp := t.TempDir()
 	origin := filepath.Join(tmp, "origin.git")
@@ -36,8 +36,8 @@ func seededBranches(t *testing.T) (dir string) {
 	commitAll(t, dir, "c-noUp")
 	gitOut(t, dir, "checkout", "main")
 
+	second = filepath.Join(tmp, "clone2")
 	gitOut(t, tmp, "clone", origin, "clone2")
-	second := filepath.Join(tmp, "clone2")
 	setGitIdentity(t, second)
 	gitOut(t, second, "checkout", "feature/a")
 	writeFile(t, second, "f.txt", "two\n")
@@ -54,7 +54,7 @@ func seededBranches(t *testing.T) (dir string) {
 	commitAll(t, dir, "c3-local")
 	gitOut(t, dir, "checkout", "main")
 	gitOut(t, dir, "fetch", "origin", "--prune")
-	return dir
+	return dir, second
 }
 
 func branchesByName(t *testing.T, r *Repo, scope BranchScope) map[string]Branch {
@@ -71,7 +71,7 @@ func branchesByName(t *testing.T, r *Repo, scope BranchScope) map[string]Branch 
 }
 
 func TestBranchesLocalScope(t *testing.T) {
-	dir := seededBranches(t)
+	dir, _ := seededBranches(t)
 	got := branchesByName(t, openRepo(t, dir), BranchScopeLocal)
 
 	wantNames := []string{"feature/a", "gone", "main", "noUp"}
@@ -132,7 +132,7 @@ func TestBranchesLocalScope(t *testing.T) {
 }
 
 func TestBranchesRemoteScope(t *testing.T) {
-	dir := seededBranches(t)
+	dir, _ := seededBranches(t)
 	got := branchesByName(t, openRepo(t, dir), BranchScopeRemote)
 
 	for _, n := range []string{"origin/main", "origin/feature/a", "origin/solo"} {
@@ -160,7 +160,7 @@ func TestBranchesRemoteScope(t *testing.T) {
 
 func TestBranchesAllIsSortedUnion(t *testing.T) {
 	ctx := context.Background()
-	dir := seededBranches(t)
+	dir, _ := seededBranches(t)
 	r := openRepo(t, dir)
 	all, err := r.Branches(ctx, BranchScopeAll)
 	if err != nil {
@@ -189,7 +189,7 @@ func TestBranchesAllIsSortedUnion(t *testing.T) {
 }
 
 func TestBranchesCommitterDate(t *testing.T) {
-	dir := seededBranches(t)
+	dir, _ := seededBranches(t)
 	out := gitOut(t, dir, "show", "-s", "--format=%ct", "refs/heads/noUp")
 	sec, err := strconv.ParseInt(out, 10, 64)
 	if err != nil {
@@ -253,13 +253,13 @@ func TestBranchesEmptyRepo(t *testing.T) {
 func TestBranchesCtxKill(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := openRepo(t, seededBranches(t)).Branches(ctx, BranchScopeAll); !errors.Is(err, ErrTimeout) {
+	if _, err := openRepo(t, seededBranchesOnly(t)).Branches(ctx, BranchScopeAll); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want timeout", err)
 	}
 }
 
 func TestBranchesMarksCurrent(t *testing.T) {
-	dir := seededBranches(t)
+	dir, _ := seededBranches(t)
 	r := openRepo(t, dir)
 	all, err := r.Branches(context.Background(), BranchScopeAll)
 	if err != nil {
@@ -280,7 +280,7 @@ func TestBranchesMarksCurrent(t *testing.T) {
 }
 
 func TestBranchesDetachedHasNoCurrent(t *testing.T) {
-	dir := seededBranches(t)
+	dir, _ := seededBranches(t)
 	gitOut(t, dir, "checkout", "-q", "--detach")
 	r := openRepo(t, dir)
 	all, err := r.Branches(context.Background(), BranchScopeAll)
@@ -295,7 +295,7 @@ func TestBranchesDetachedHasNoCurrent(t *testing.T) {
 }
 
 func TestBranchesInvalidScope(t *testing.T) {
-	_, err := openRepo(t, seededBranches(t)).Branches(context.Background(), BranchScope(9))
+	_, err := openRepo(t, seededBranchesOnly(t)).Branches(context.Background(), BranchScope(9))
 	if ge, ok := err.(*GitError); !ok || ge.Code != CodeValidationFailed {
 		t.Fatalf("err = %v, want validation_failed", err)
 	}
@@ -303,7 +303,7 @@ func TestBranchesInvalidScope(t *testing.T) {
 
 func TestCurrentBranch(t *testing.T) {
 	ctx := context.Background()
-	dir := seededBranches(t)
+	dir, _ := seededBranches(t)
 	r := openRepo(t, dir)
 	name, err := r.currentBranch(ctx)
 	if err != nil || name != "main" {
@@ -318,7 +318,7 @@ func TestCurrentBranch(t *testing.T) {
 
 func TestCurrentBranchUnreadableHead(t *testing.T) {
 	skipWithoutUnixPerms(t)
-	r := openRepo(t, seededBranches(t))
+	r := openRepo(t, seededBranchesOnly(t))
 	head := filepath.Join(r.path, ".git", "HEAD")
 	if err := os.Chmod(head, 0); err != nil {
 		t.Fatal(err)
@@ -332,4 +332,29 @@ func TestCurrentBranchUnreadableHead(t *testing.T) {
 	if ge.ExitCode == 1 {
 		t.Fatalf("unreadable HEAD mapped to detached: %+v", ge)
 	}
+}
+
+func seededBranchesOnly(t *testing.T) string {
+	t.Helper()
+	dir, _ := seededBranches(t)
+	return dir
+}
+
+// second cloned origin after main existed, so it carries refs/remotes/origin/HEAD.
+func TestBranchesSkipsRemoteHeadAlias(t *testing.T) {
+	for _, scope := range []BranchScope{BranchScopeRemote, BranchScopeAll} {
+		got := branchesByName(t, openRepo(t, seededBranchesSecond(t)), scope)
+		if _, ok := got["origin/HEAD"]; ok {
+			t.Fatalf("remote HEAD alias listed in scope %d: %v", scope, got)
+		}
+		if _, ok := got["origin/main"]; !ok {
+			t.Fatalf("origin/main missing in scope %d", scope)
+		}
+	}
+}
+
+func seededBranchesSecond(t *testing.T) string {
+	t.Helper()
+	_, second := seededBranches(t)
+	return second
 }
