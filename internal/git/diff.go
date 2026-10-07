@@ -1,6 +1,12 @@
 package git
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -407,4 +413,164 @@ func unquoteGitPath(s string) (string, error) {
 
 func diffParseError(msg string) error {
 	return &GitError{Code: CodeParseFailed, Message: msg, ExitCode: -1}
+}
+
+// DiffWorkingFile returns the diff of one repository-relative path.
+// staged=false compares work tree against the index; staged=true compares
+// the index against HEAD. Untracked files never appear in git diff, so the
+// unstaged side synthesizes their diff against /dev/null from the file
+// bytes, matching the shape git prints once the file is staged - binary
+// heuristic included.
+func (r *Repo) DiffWorkingFile(ctx context.Context, path string, staged bool) (*FileDiff, error) {
+	clean, err := cleanDiffPath(path)
+	if err != nil {
+		return nil, err
+	}
+	// :(literal) keeps glob characters in real file names inert: without
+	// it a path such as "weird*.txt" could match unrelated files
+	args := []string{"diff", "--no-ext-diff"}
+	if staged {
+		args = append(args, "--staged")
+	}
+	out, _, err := runGit(ctx, r.path, append(args, "--", ":(literal)"+clean)...)
+	if err != nil {
+		return nil, err
+	}
+	fd, err := diffFileFromOutput(out, clean)
+	if err != nil {
+		return nil, err
+	}
+	if fd != nil {
+		return fd, nil
+	}
+	if staged {
+		return unchangedFileDiff(clean), nil
+	}
+	tracked, err := r.isTracked(ctx, clean)
+	if err != nil {
+		return nil, err
+	}
+	if tracked {
+		return unchangedFileDiff(clean), nil
+	}
+	return diffUntrackedFile(clean, filepath.Join(r.path, filepath.FromSlash(clean)))
+}
+
+// diffFileFromOutput enforces the single-file contract on one-path git
+// diff output: no sections yields nil for the caller to interpret, one
+// section yields the filled FileDiff, many reject as validation failures.
+func diffFileFromOutput(out []byte, path string) (*FileDiff, error) {
+	files, err := parseUnifiedDiff(out)
+	if err != nil {
+		return nil, err
+	}
+	switch len(files) {
+	case 0:
+		return nil, nil
+	case 1:
+		return fillDiffPaths(&files[0], path), nil
+	default:
+		return nil, &GitError{Code: CodeValidationFailed, Message: "path matches more than one file: " + path, ExitCode: -1}
+	}
+}
+
+func (r *Repo) isTracked(ctx context.Context, path string) (bool, error) {
+	_, _, err := runGit(ctx, r.path, "ls-files", "--error-unmatch", "--", ":(literal)"+path)
+	if err == nil {
+		return true, nil
+	}
+	var ge *GitError
+	if errors.As(err, &ge) && ge.Code == CodeCommandFailed && ge.ExitCode == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// cleanDiffPath validates a repository-relative, single-file diff path and
+// normalizes it to slash form for pathspecs and result paths.
+func cleanDiffPath(path string) (string, error) {
+	validation := func(msg string) error {
+		return &GitError{Code: CodeValidationFailed, Message: msg, ExitCode: -1}
+	}
+	if path == "" {
+		return "", validation("diff path required")
+	}
+	if filepath.IsAbs(path) {
+		return "", validation("diff path must be relative to the repository: " + path)
+	}
+	clean := filepath.ToSlash(filepath.Clean(path))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", validation("diff path must stay inside the repository: " + path)
+	}
+	return clean, nil
+}
+
+// fillDiffPaths restores the name git omits in header-only sections (a
+// zero-byte add, a mode-only change): callers already know the path.
+func fillDiffPaths(f *FileDiff, path string) *FileDiff {
+	if f.OldPath != "" || f.NewPath != "" {
+		return f
+	}
+	switch f.Change {
+	case ChangeAdded:
+		f.NewPath = path
+	case ChangeDeleted:
+		f.OldPath = path
+	default:
+		f.OldPath, f.NewPath = path, path
+	}
+	return f
+}
+
+func unchangedFileDiff(path string) *FileDiff {
+	return &FileDiff{OldPath: path, NewPath: path, Change: ChangeModified, Hunks: []DiffHunk{}}
+}
+
+// diffUntrackedFile turns raw file bytes into the added-file diff git
+// would print after staging, against /dev/null.
+func diffUntrackedFile(path, fullPath string) (*FileDiff, error) {
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		if info, serr := os.Stat(fullPath); serr == nil && info.IsDir() {
+			return nil, &GitError{Code: CodeValidationFailed, Message: "untracked directory has no single-file diff: " + path, ExitCode: -1}
+		}
+		return nil, &GitError{Code: CodePathMissing, Message: path + " is not readable: " + err.Error(), ExitCode: -1}
+	}
+	fd := &FileDiff{NewPath: path, Change: ChangeAdded, Hunks: []DiffHunk{}}
+	// git's convert.c rule: only the first 8000 bytes decide binary-ness
+	if bytes.IndexByte(data[:min(len(data), 8000)], 0) >= 0 {
+		fd.Binary = true
+		return fd, nil
+	}
+	lines, unterminated := splitContentLines(data)
+	if len(lines) == 0 {
+		return fd, nil
+	}
+	header := fmt.Sprintf("@@ -0,0 +1,%d @@", len(lines))
+	if len(lines) == 1 {
+		header = "@@ -0,0 +1 @@"
+	}
+	h := DiffHunk{Header: header, NewStart: 1, NewCount: len(lines), Lines: make([]DiffLine, 0, len(lines))}
+	for i, text := range lines {
+		h.Lines = append(h.Lines, DiffLine{
+			Type: DiffLineAdd, NewNum: i + 1, Text: text,
+			NoNewline: unterminated && i == len(lines)-1,
+		})
+	}
+	fd.Hunks = append(fd.Hunks, h)
+	return fd, nil
+}
+
+// splitContentLines counts a final unterminated fragment as a line,
+// mirroring git's line numbering for files without a trailing newline.
+func splitContentLines(data []byte) (lines []string, unterminated bool) {
+	if len(data) == 0 {
+		return nil, false
+	}
+	text := string(data)
+	unterminated = !strings.HasSuffix(text, "\n")
+	if !unterminated {
+		text = text[:len(text)-1]
+	}
+	return strings.Split(text, "\n"), unterminated
 }
