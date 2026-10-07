@@ -765,7 +765,10 @@ func TestCommitAdapter(t *testing.T) {
 	if res := app.Commit("nothing open", false); res.Code != noRepoCode {
 		t.Fatalf("closed repo = %+v, want no_repo", res)
 	}
-	app.OpenRepository(dir)
+	opened := app.OpenRepository(dir)
+	if opened.Code != "" {
+		t.Fatalf("open: %+v", opened)
+	}
 	writeFileForAppTest(t, dir, "a.txt", "content\n")
 	gitRunIn(t, dir, "add", "a.txt")
 
@@ -778,7 +781,10 @@ func TestCommitAdapter(t *testing.T) {
 	if got := gitRunIn(t, dir, "log", "-1", "--format=%s"); got != "add a" {
 		t.Fatalf("subject = %q", got)
 	}
-	// the success nudge reaches the UI as a fresh repo:status-changed
+	// the success nudge reaches the UI as a fresh repo:status-changed;
+	// snap.Path is the Cleaned work-tree root, so compare against the
+	// app's own resolved path: raw git output uses forward slashes and
+	// 8.3 short names on Windows and never matches there
 	sawStatus := false
 	deadline := time.After(3 * time.Second)
 	for !sawStatus {
@@ -786,7 +792,7 @@ func TestCommitAdapter(t *testing.T) {
 		case ev := <-ch:
 			if ev.event == statusChangedEvent {
 				snap := ev.data[0].(StatusResponse)
-				if snap.Path == gitRunIn(t, dir, "rev-parse", "--show-toplevel") && len(snap.Files) == 0 {
+				if snap.Path == opened.Path && len(snap.Files) == 0 {
 					sawStatus = true
 				}
 			}
