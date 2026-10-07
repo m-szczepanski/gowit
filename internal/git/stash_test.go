@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // stashedRepo: one commit, then a tracked edit plus two untracked files
@@ -113,4 +115,76 @@ func lines(t *testing.T, s string) int {
 		return 0
 	}
 	return len(strings.Split(strings.TrimSpace(s), "\n"))
+}
+
+func TestStashListOrderAndFields(t *testing.T) {
+	ctx := context.Background()
+	dir := stashedRepo(t)
+	r := openRepo(t, dir)
+	if err := r.StashPush(ctx, StashPushOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "a.txt", "again\n")
+	if err := r.StashPush(ctx, StashPushOptions{Message: "second"}); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := r.StashList(ctx)
+	if err != nil {
+		t.Fatalf("StashList: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("len = %d, want 2: %+v", len(list), list)
+	}
+
+	newest, older := list[0], list[1]
+	if newest.Index != 0 || older.Index != 1 {
+		t.Fatalf("indexes = %d,%d, want 0,1 newest first", newest.Index, older.Index)
+	}
+	if newest.Message != "On main: second" {
+		t.Fatalf("newest Message = %q, want %q", newest.Message, "On main: second")
+	}
+	if newest.Type != "message" {
+		t.Fatalf("newest Type = %q, want message", newest.Type)
+	}
+	if !strings.HasPrefix(older.Message, "WIP on main: ") || older.Type != "wip" {
+		t.Fatalf("older = %+v, want WIP entry", older)
+	}
+
+	rawDates := gitOut(t, dir, "stash", "list", "--format=%ct")
+	dateLines := strings.Split(rawDates, "\n")
+	for i, line := range dateLines {
+		sec, err := strconv.ParseInt(line, 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := time.Unix(sec, 0).UTC(); !list[i].Date.Equal(want) {
+			t.Fatalf("entry %d Date = %v, want %v", i, list[i].Date, want)
+		}
+	}
+}
+
+func TestStashListEmpty(t *testing.T) {
+	list, err := openRepo(t, stashedRepo(t)).StashList(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("got %+v, want none", list)
+	}
+}
+
+func TestParseStashListMalformed(t *testing.T) {
+	cases := []string{
+		"stash@{0}\x00On main: msg",
+		"refs/weird\x00On main: msg\x001700000000",
+		"stash@{0}\x00On main: msg\x00nan",
+	}
+	for _, in := range cases {
+		if _, err := parseStashList(in); err == nil {
+			t.Fatalf("parseStashList(%q) = nil, want parse failure", in)
+		} else if ge, ok := err.(*GitError); !ok || ge.Code != CodeParseFailed {
+			t.Fatalf("parseStashList(%q) err = %v, want parse_failed", in, err)
+		}
+	}
 }
