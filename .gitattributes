@@ -17,6 +17,10 @@
 *.css text eol=lf
 *.html text eol=lf
 
+# Diff fixtures (internal/git/testdata) must check out byte-exact: a
+# converted line ending would change hunk contents and break parse tests.
+*.diff text eol=lf
+
 *.yml text eol=lf
 *.yaml text eol=lf
 *.toml text eol=lf

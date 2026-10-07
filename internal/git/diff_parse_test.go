@@ -2,6 +2,7 @@ package git
 
 import (
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -457,5 +458,117 @@ func TestParseUnifiedDiffBinary(t *testing.T) {
 	f := got[0]
 	if !f.Binary || f.OldPath != "bin.dat" || f.NewPath != "bin.dat" || len(f.Hunks) != 0 {
 		t.Fatalf("got %+v, want binary bin.dat with no hunks", f)
+	}
+}
+
+// TestParseUnifiedDiffRealGitFixtures round-trips issue #24's acceptance
+// case: files under testdata/ captured verbatim from real git diff/show
+// output, parsed back and checked against hand-worked expectations.
+func TestParseUnifiedDiffRealGitFixtures(t *testing.T) {
+	cases := []struct {
+		file string
+		want FileDiff
+	}{
+		{
+			file: "add",
+			want: FileDiff{
+				OldPath: "", NewPath: "new.txt", Change: ChangeAdded, NewMode: "100644",
+				Hunks: []DiffHunk{{
+					Header: "@@ -0,0 +1,3 @@", NewStart: 1, NewCount: 3,
+					Lines: []DiffLine{
+						{Type: DiffLineAdd, NewNum: 1, Text: "brand"},
+						{Type: DiffLineAdd, NewNum: 2, Text: "new"},
+						{Type: DiffLineAdd, NewNum: 3, Text: "file"},
+					},
+				}},
+			},
+		},
+		{
+			file: "delete",
+			want: FileDiff{
+				OldPath: "del.txt", NewPath: "", Change: ChangeDeleted, OldMode: "100644",
+				Hunks: []DiffHunk{{
+					Header: "@@ -1,3 +0,0 @@", OldStart: 1, OldCount: 3,
+					Lines: []DiffLine{
+						{Type: DiffLineDel, OldNum: 1, Text: "l1"},
+						{Type: DiffLineDel, OldNum: 2, Text: "l2"},
+						{Type: DiffLineDel, OldNum: 3, Text: "l3"},
+					},
+				}},
+			},
+		},
+		{
+			file: "modify",
+			want: FileDiff{
+				OldPath: "mod.txt", NewPath: "mod.txt", Change: ChangeModified,
+				Hunks: []DiffHunk{{
+					Header: "@@ -1,4 +1,4 @@", OldStart: 1, OldCount: 4, NewStart: 1, NewCount: 4,
+					Lines: []DiffLine{
+						{Type: DiffLineContext, OldNum: 1, NewNum: 1, Text: "one"},
+						{Type: DiffLineDel, OldNum: 2, Text: "two"},
+						{Type: DiffLineAdd, NewNum: 2, Text: "TWO"},
+						{Type: DiffLineContext, OldNum: 3, NewNum: 3, Text: "three"},
+						{Type: DiffLineContext, OldNum: 4, NewNum: 4, Text: "four"},
+					},
+				}},
+			},
+		},
+		{
+			file: "multihunk",
+			want: FileDiff{
+				OldPath: "many.txt", NewPath: "many.txt", Change: ChangeModified,
+				Hunks: []DiffHunk{
+					{
+						Header: "@@ -1,4 +1,4 @@", OldStart: 1, OldCount: 4, NewStart: 1, NewCount: 4,
+						Lines: []DiffLine{
+							{Type: DiffLineDel, OldNum: 1, Text: "1"},
+							{Type: DiffLineAdd, NewNum: 1, Text: "ONE"},
+							{Type: DiffLineContext, OldNum: 2, NewNum: 2, Text: "2"},
+							{Type: DiffLineContext, OldNum: 3, NewNum: 3, Text: "3"},
+							{Type: DiffLineContext, OldNum: 4, NewNum: 4, Text: "4"},
+						},
+					},
+					{
+						Header: "@@ -37,4 +37,4 @@", OldStart: 37, OldCount: 4, NewStart: 37, NewCount: 4,
+						Lines: []DiffLine{
+							{Type: DiffLineContext, OldNum: 37, NewNum: 37, Text: "37"},
+							{Type: DiffLineContext, OldNum: 38, NewNum: 38, Text: "38"},
+							{Type: DiffLineContext, OldNum: 39, NewNum: 39, Text: "39"},
+							{Type: DiffLineDel, OldNum: 40, Text: "40"},
+							{Type: DiffLineAdd, NewNum: 40, Text: "FORTY"},
+						},
+					},
+				},
+			},
+		},
+		{
+			file: "rename",
+			want: FileDiff{
+				OldPath: "r1.txt", NewPath: "r2.txt", Change: ChangeRenamed, Similarity: 100,
+				Hunks: []DiffHunk{},
+			},
+		},
+		{
+			file: "binary",
+			want: FileDiff{
+				OldPath: "bin.dat", NewPath: "bin.dat", Change: ChangeModified, Binary: true,
+				Hunks: []DiffHunk{},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			data, err := os.ReadFile("testdata/" + tc.file + ".diff")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := parseUnifiedDiff(data)
+			if err != nil {
+				t.Fatalf("parse %s.diff: %v", tc.file, err)
+			}
+			if len(got) != 1 || !reflect.DeepEqual(got[0], tc.want) {
+				t.Fatalf("got  %+v\nwant %+v", got, tc.want)
+			}
+		})
 	}
 }
