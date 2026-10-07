@@ -601,3 +601,203 @@ func TestDiffCommitFileCtxKill(t *testing.T) {
 		t.Fatalf("err = %v, want timeout", err)
 	}
 }
+
+func statsByPath(t *testing.T, stats []CommitFileStat, hash string) map[string]CommitFileStat {
+	t.Helper()
+	m := map[string]CommitFileStat{}
+	for _, s := range stats {
+		m[s.Path] = s
+	}
+	if len(m) != len(stats) {
+		t.Fatalf("duplicate paths in %+v (hash %s)", stats, hash)
+	}
+	return m
+}
+
+func TestDiffCommitFiles(t *testing.T) {
+	ctx := context.Background()
+	dir := initRepo(t)
+	writeFile(t, dir, "a.txt", "one\ntwo\n")
+	writeFile(t, dir, "b.txt", "del1\ndel2\n")
+	writeFile(t, dir, "k.txt", "keep\n")
+	writeFile(t, dir, "r.txt", "rename me content line\nmore lines here\n")
+	writeFile(t, dir, "mode.txt", "m\n")
+	writeFile(t, dir, "old name.txt", "spaced name\n")
+	writeFile(t, dir, "ta\tb.txt", "tabbed name\n")
+	writeFileBytes(t, dir, "mod.bin", []byte{0, 1, 2, 3})
+	commitAll(t, dir, "base")
+
+	runGit(ctx, dir, "rm", "b.txt")
+	runGit(ctx, dir, "mv", "r.txt", "renamed.txt")
+	runGit(ctx, dir, "mv", "old name.txt", "new name.txt")
+	runGit(ctx, dir, "mv", "ta\tb.txt", "tb.txt")
+	writeFile(t, dir, "a.txt", "ONE\ntwo\n")
+	writeFile(t, dir, "add.txt", "new1\nnew2\n")
+	if err := os.Chmod(filepath.Join(dir, "mode.txt"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFileBytes(t, dir, "mod.bin", []byte{0, 9, 8, 7})
+	commitAll(t, dir, "change")
+
+	stats, err := openRepo(t, dir).DiffCommitFiles(ctx, hashOf(t, dir, "HEAD"))
+	if err != nil {
+		t.Fatalf("DiffCommitFiles: %v", err)
+	}
+	if len(stats) != 8 {
+		t.Fatalf("got %d entries %+v, want 8", len(stats), stats)
+	}
+	m := statsByPath(t, stats, "HEAD")
+
+	if s := m["b.txt"]; s.Change != ChangeDeleted || s.Added != 0 || s.Deleted != 2 {
+		t.Fatalf("b.txt = %+v, want deleted 0/2", s)
+	}
+	if s := m["a.txt"]; s.Change != ChangeModified || s.Added != 1 || s.Deleted != 1 {
+		t.Fatalf("a.txt = %+v, want modified 1/1", s)
+	}
+	if s := m["add.txt"]; s.Change != ChangeAdded || s.Added != 2 || s.Deleted != 0 {
+		t.Fatalf("add.txt = %+v, want added 2/0", s)
+	}
+	if s := m["renamed.txt"]; s.Change != ChangeRenamed || s.OldPath != "r.txt" ||
+		s.Similarity != 100 || s.Added != 0 || s.Deleted != 0 {
+		t.Fatalf("renamed.txt = %+v, want R100 r.txt 0/0", s)
+	}
+	if s := m["new name.txt"]; s.Change != ChangeRenamed || s.OldPath != "old name.txt" {
+		t.Fatalf("new name.txt = %+v, want rename of old name.txt", s)
+	}
+	if s := m["tb.txt"]; s.Change != ChangeRenamed || s.OldPath != "ta\tb.txt" {
+		t.Fatalf("tb.txt = %+v, want rename of tabbed path untouched by quoting", s)
+	}
+	if s := m["mode.txt"]; s.Change != ChangeModified || s.Added != 0 || s.Deleted != 0 {
+		t.Fatalf("mode.txt = %+v, want modified 0/0", s)
+	}
+	if s := m["mod.bin"]; !s.Binary || s.Added != 0 || s.Deleted != 0 {
+		t.Fatalf("mod.bin = %+v, want binary counts", s)
+	}
+}
+
+func TestDiffCommitFilesMergeFirstParent(t *testing.T) {
+	dir, mergeHash, _, _ := mergeRepo(t)
+	stats, err := openRepo(t, dir).DiffCommitFiles(context.Background(), mergeHash)
+	if err != nil {
+		t.Fatalf("DiffCommitFiles: %v", err)
+	}
+	m := statsByPath(t, stats, mergeHash)
+	if len(stats) != 1 || m["s.txt"].Change != ChangeAdded {
+		t.Fatalf("got %+v, want only s.txt added against first parent", stats)
+	}
+}
+
+func TestDiffCommitFilesRootAndEmpty(t *testing.T) {
+	dir, _, _, rootHash := mergeRepo(t)
+	stats, err := openRepo(t, dir).DiffCommitFiles(context.Background(), rootHash)
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	m := statsByPath(t, stats, rootHash)
+	if len(stats) != 1 || m["base.txt"].Change != ChangeAdded {
+		t.Fatalf("root got %+v, want base.txt added", stats)
+	}
+
+	_, _, err = runGit(context.Background(), dir, "commit", "-q", "--allow-empty", "-m", "nothing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats, err = openRepo(t, dir).DiffCommitFiles(context.Background(), hashOf(t, dir, "HEAD"))
+	if err != nil {
+		t.Fatalf("empty commit: %v", err)
+	}
+	if len(stats) != 0 {
+		t.Fatalf("got %+v, want no entries", stats)
+	}
+}
+
+func TestDiffCommitFilesValidation(t *testing.T) {
+	dir, _, _, _ := mergeRepo(t)
+	repo := openRepo(t, dir)
+	for _, hash := range []string{"", "-x"} {
+		if _, err := repo.DiffCommitFiles(context.Background(), hash); !errors.Is(err, ErrValidationFailed) {
+			t.Fatalf("hash %q: err = %v, want validation_failed", hash, err)
+		}
+	}
+	if _, err := repo.DiffCommitFiles(context.Background(), "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"); !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want command_failed", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := repo.DiffCommitFiles(ctx, "HEAD"); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want timeout", err)
+	}
+}
+
+func TestParseNameStatusZ(t *testing.T) {
+	in := strings.Join([]string{"R100", "old name.txt", "new name.txt", "A", "add.txt"}, "\x00") + "\x00"
+	got, err := parseNameStatusZ([]byte(in))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 2 || got[0].path != "new name.txt" || got[0].oldPath != "old name.txt" ||
+		got[0].similarity != 100 || got[0].change != ChangeRenamed ||
+		got[1].path != "add.txt" || got[1].change != ChangeAdded {
+		t.Fatalf("got %+v", got)
+	}
+	for _, bad := range []string{"A\x00", "R100\x00only\x00", "\x00x\x00", "R9x\x00a\x00b\x00"} {
+		if _, err := parseNameStatusZ([]byte(bad)); !errors.Is(err, ErrParseFailed) {
+			t.Fatalf("input %q: err = %v, want parse_failed", bad, err)
+		}
+	}
+}
+
+func TestParseNumstatZ(t *testing.T) {
+	in := strings.Join([]string{"1\t2\tpath.txt", "0\t0\t", "old", "new", "-\t-\tbin.dat"}, "\x00") + "\x00"
+	got, err := parseNumstatZ([]byte(in))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if p := got["path.txt"]; p.added != 1 || p.deleted != 2 {
+		t.Fatalf("path.txt = %+v, want 1/2", p)
+	}
+	if r := got["new"]; r.added != 0 || r.deleted != 0 {
+		t.Fatalf("rename side = %+v", r)
+	}
+	if b := got["bin.dat"]; !b.binary {
+		t.Fatalf("bin.dat = %+v, want binary", b)
+	}
+	for _, bad := range []string{"x\ty\tz\x00", "0\t0\t\x00old\x00", "no-tabs\x00", "-\t5\tmix\x00", "1\t2\x00", "5\tq\tf\x00"} {
+		if _, err := parseNumstatZ([]byte(bad)); !errors.Is(err, ErrParseFailed) {
+			t.Fatalf("input %q: err = %v, want parse_failed", bad, err)
+		}
+	}
+}
+
+func TestParseNameStatusZLetters(t *testing.T) {
+	in := strings.Join([]string{"C78", "src", "dst", "T", "f.txt", "Q", "x.txt"}, "\x00") + "\x00"
+	got, err := parseNameStatusZ([]byte(in))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got[0].change != ChangeCopied || got[0].similarity != 78 || got[0].oldPath != "src" {
+		t.Fatalf("copy = %+v, want C78 src->dst", got[0])
+	}
+	if got[1].change != ChangeTypeChanged || got[2].change != ChangeUnknown {
+		t.Fatalf("letters = %+v, want T then unknown Q", got)
+	}
+}
+
+func TestParseCommitFileStats(t *testing.T) {
+	got, err := parseCommitFileStats(
+		[]byte("A\x00n.txt\x00"),
+		[]byte("3\t0\tn.txt\x00"),
+	)
+	if err != nil || len(got) != 1 || got[0].Added != 3 || got[0].Change != ChangeAdded {
+		t.Fatalf("got %+v err %v, want one added 3/0", got, err)
+	}
+	if _, err := parseCommitFileStats([]byte("A\x00"), []byte("")); !errors.Is(err, ErrParseFailed) {
+		t.Fatalf("truncated names: err = %v, want parse_failed", err)
+	}
+	if _, err := parseCommitFileStats([]byte("A\x00n.txt\x00"), []byte("z\t0\tn.txt\x00")); !errors.Is(err, ErrParseFailed) {
+		t.Fatalf("bad counts: err = %v, want parse_failed", err)
+	}
+	if _, err := parseCommitFileStats([]byte("A\x00n.txt\x00"), []byte("1\t0\tOther.txt\x00")); !errors.Is(err, ErrParseFailed) {
+		t.Fatalf("mismatched join: err = %v, want parse_failed", err)
+	}
+}

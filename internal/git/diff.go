@@ -484,15 +484,15 @@ func diffFileFromOutput(out []byte, path string) (*FileDiff, error) {
 // breaks git's rename pairing, so a renamed file renders as a full add
 // (new side) or delete (old side); DiffCommitFiles carries the R status.
 func (r *Repo) DiffCommitFile(ctx context.Context, hash, path string) (*FileDiff, error) {
-	if hash == "" || strings.HasPrefix(hash, "-") {
-		return nil, &GitError{Code: CodeValidationFailed, Message: "valid commit hash required", ExitCode: -1}
+	if err := checkCommitHash(hash); err != nil {
+		return nil, err
 	}
 	clean, err := cleanDiffPath(path)
 	if err != nil {
 		return nil, err
 	}
-	out, _, err := runGit(ctx, r.path, "show", "--format=", "-m", "--first-parent", "--no-ext-diff",
-		hash, "--", ":(literal)"+clean)
+	out, _, err := runGit(ctx, r.path,
+		showCommitDiffArgs(hash, []string{"--no-ext-diff"}, []string{"--", ":(literal)" + clean})...)
 	if err != nil {
 		return nil, err
 	}
@@ -601,4 +601,199 @@ func splitContentLines(data []byte) (lines []string, unterminated bool) {
 		text = text[:len(text)-1]
 	}
 	return strings.Split(text, "\n"), unterminated
+}
+
+// DiffCommitFiles returns the per-file summary of one commit against its
+// first parent (same merge rule as DiffCommitFile): git status letter,
+// insertions and deletions, with rename detection on (-M). Neither
+// --name-status nor --numstat alone carries both the letter and the
+// counts, so we run both passes and join them per path.
+func (r *Repo) DiffCommitFiles(ctx context.Context, hash string) ([]CommitFileStat, error) {
+	if err := checkCommitHash(hash); err != nil {
+		return nil, err
+	}
+	raws := make([][]byte, 0, 2)
+	for _, flags := range [][]string{{"--name-status", "-M"}, {"--numstat", "-M"}} {
+		out, err := r.showZ(ctx, hash, flags...)
+		if err != nil {
+			return nil, err
+		}
+		raws = append(raws, out)
+	}
+	return parseCommitFileStats(raws[0], raws[1])
+}
+
+// parseCommitFileStats joins the two decoded show passes; a status record
+// without its numstat counterpart means git output was cut short.
+func parseCommitFileStats(namesOut, countsOut []byte) ([]CommitFileStat, error) {
+	statuses, err := parseNameStatusZ(namesOut)
+	if err != nil {
+		return nil, err
+	}
+	counts, err := parseNumstatZ(countsOut)
+	if err != nil {
+		return nil, err
+	}
+	stats := make([]CommitFileStat, 0, len(statuses))
+	for _, st := range statuses {
+		cn, ok := counts[st.path]
+		if !ok {
+			return nil, diffParseError("numstat record missing for " + st.path)
+		}
+		stats = append(stats, CommitFileStat{
+			Change: st.change, Path: st.path, OldPath: st.oldPath,
+			Similarity: st.similarity, Binary: cn.binary, Added: cn.added, Deleted: cn.deleted,
+		})
+	}
+	return stats, nil
+}
+
+func (r *Repo) showZ(ctx context.Context, hash string, flags ...string) ([]byte, error) {
+	out, _, err := runGit(ctx, r.path, showCommitDiffArgs(hash, append(flags, "-z"), nil)...)
+	return out, err
+}
+
+func checkCommitHash(hash string) error {
+	// leading "-" would be swallowed as an option; argv passes verbatim but
+	// the option boundary still needs guarding
+	if hash == "" || strings.HasPrefix(hash, "-") {
+		return &GitError{Code: CodeValidationFailed, Message: "valid commit hash required", ExitCode: -1}
+	}
+	return nil
+}
+
+func showCommitDiffArgs(hash string, pre, post []string) []string {
+	args := []string{"show", "--format=", "-m", "--first-parent"}
+	args = append(args, pre...)
+	args = append(args, hash)
+	return append(args, post...)
+}
+
+type nameStatusEntry struct {
+	change     Change
+	path       string
+	oldPath    string
+	similarity int
+}
+
+// parseNameStatusZ decodes NUL-terminated --name-status records:
+// "<status>\0<path>\0", where R and C statuses are followed by old and
+// new paths instead of a single one.
+func parseNameStatusZ(out []byte) ([]nameStatusEntry, error) {
+	if len(out) == 0 {
+		return nil, nil
+	}
+	tokens := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	var res []nameStatusEntry
+	for i := 0; i < len(tokens); i++ {
+		status := tokens[i]
+		if status == "" {
+			return nil, diffParseError("empty name-status record")
+		}
+		e := nameStatusEntry{change: nameStatusChange(status[0])}
+		if score := status[1:]; score != "" {
+			n, err := strconv.Atoi(score)
+			if err != nil {
+				return nil, diffParseError("malformed name-status score: " + status)
+			}
+			e.similarity = n
+		}
+		switch status[0] {
+		case 'R', 'C':
+			if i+2 >= len(tokens) {
+				return nil, diffParseError("truncated rename record: " + status)
+			}
+			e.oldPath, e.path = tokens[i+1], tokens[i+2]
+			i += 2
+		default:
+			if i+1 >= len(tokens) {
+				return nil, diffParseError("truncated name-status record: " + status)
+			}
+			e.path = tokens[i+1]
+			i++
+		}
+		res = append(res, e)
+	}
+	return res, nil
+}
+
+func nameStatusChange(letter byte) Change {
+	switch letter {
+	case 'A':
+		return ChangeAdded
+	case 'M':
+		return ChangeModified
+	case 'D':
+		return ChangeDeleted
+	case 'R':
+		return ChangeRenamed
+	case 'C':
+		return ChangeCopied
+	case 'T':
+		return ChangeTypeChanged
+	default:
+		return ChangeUnknown
+	}
+}
+
+type numstatEntry struct {
+	added, deleted int
+	binary         bool
+}
+
+// parseNumstatZ decodes NUL-terminated --numstat records:
+// "<add>\t<del>\t<path>\0". Rename and copy records have an empty path
+// slot followed by old and new paths; binary files report "-".
+func parseNumstatZ(out []byte) (map[string]numstatEntry, error) {
+	res := map[string]numstatEntry{}
+	if len(out) == 0 {
+		return res, nil
+	}
+	tokens := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	for i := 0; i < len(tokens); i++ {
+		addText, rest, ok := strings.Cut(tokens[i], "\t")
+		if !ok {
+			return nil, diffParseError("malformed numstat record: " + tokens[i])
+		}
+		delText, path, hasPath := strings.Cut(rest, "\t")
+		if !hasPath {
+			return nil, diffParseError("malformed numstat record: " + tokens[i])
+		}
+		var e numstatEntry
+		if addText == "-" && delText == "-" {
+			e.binary = true
+		} else {
+			added, err := strconv.Atoi(addText)
+			if err != nil {
+				return nil, diffParseError("malformed numstat counts: " + tokens[i])
+			}
+			deleted, err := strconv.Atoi(delText)
+			if err != nil {
+				return nil, diffParseError("malformed numstat counts: " + tokens[i])
+			}
+			e.added, e.deleted = added, deleted
+		}
+		if path == "" {
+			if i+2 >= len(tokens) {
+				return nil, diffParseError("truncated numstat rename record")
+			}
+			path = tokens[i+2]
+			i += 2
+		}
+		res[path] = e
+	}
+	return res, nil
+}
+
+// CommitFileStat is one changed file in a commit summary. Path is the new
+// side; OldPath is set for renames. Binary marks files whose line counts
+// git cannot compute.
+type CommitFileStat struct {
+	Change     Change `json:"change"`
+	Path       string `json:"path"`
+	OldPath    string `json:"oldPath,omitempty"`
+	Similarity int    `json:"similarity,omitempty"`
+	Binary     bool   `json:"binary,omitempty"`
+	Added      int    `json:"added"`
+	Deleted    int    `json:"deleted"`
 }
