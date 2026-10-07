@@ -3,6 +3,8 @@ package git
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -194,8 +196,21 @@ func TestCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
 	}
-	if !tracked.CanPush || !tracked.CanPull || tracked.Upstream != "origin/main" || tracked.Reason != "" {
-		t.Fatalf("tracked = %+v, want push/pull enabled on origin/main", tracked)
+	if !tracked.CanPush || !tracked.CanPull || !tracked.CanFetch || !tracked.HasRemotes ||
+		tracked.Upstream != "origin/main" || tracked.Reason != "" {
+		t.Fatalf("tracked = %+v, want all enabled on origin/main", tracked)
+	}
+
+	// no remote at all: nothing fetchable, push/pull blocked
+	plain := initRepo(t)
+	writeFile(t, plain, "f.txt", "x\n")
+	commitAll(t, plain, "c")
+	bare, err := openRepo(t, plain).Capabilities(ctx)
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	if bare.CanFetch || bare.CanPush || bare.HasRemotes || bare.Reason != IssueNoRemotes {
+		t.Fatalf("no-remote = %+v, want %q", bare, IssueNoRemotes)
 	}
 
 	untracked := initRepo(t)
@@ -206,8 +221,8 @@ func TestCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Capabilities: %v", err)
 	}
-	if got.CanPush || got.CanPull || got.Upstream != "" || got.Reason != IssueNoUpstream {
-		t.Fatalf("untracked branch = %+v, want %q", got, IssueNoUpstream)
+	if got.CanPush || got.CanPull || !got.CanFetch || got.Upstream != "" || got.Reason != IssueNoUpstream {
+		t.Fatalf("untracked branch = %+v, want %q with fetch still offered", got, IssueNoUpstream)
 	}
 
 	dir := trackedRepo(t)
@@ -293,5 +308,19 @@ func TestSetUpstreamErrors(t *testing.T) {
 	cancel()
 	if err := repo.SetUpstream(kctx, "main", "origin", "main"); !errors.Is(err, ErrTimeout) {
 		t.Fatalf("err = %v, want timeout", err)
+	}
+}
+
+func TestCapabilitiesPropagatesStatusFailure(t *testing.T) {
+	dir := initRepo(t)
+	writeFile(t, dir, "f.txt", "x\n")
+	commitAll(t, dir, "c")
+	// a corrupt index leaves remote -v (config-only) working and breaks
+	// git status: the second call's typed error must surface
+	if err := os.WriteFile(filepath.Join(dir, ".git", "index"), []byte("garbage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openRepo(t, dir).Capabilities(context.Background()); !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want command_failed", err)
 	}
 }

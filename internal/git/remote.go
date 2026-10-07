@@ -108,6 +108,7 @@ type CapabilityIssue string
 
 const (
 	IssueDetachedHead CapabilityIssue = "detached_head"
+	IssueNoRemotes    CapabilityIssue = "no_remotes"
 	IssueNoUpstream   CapabilityIssue = "no_upstream"
 )
 
@@ -115,25 +116,40 @@ const (
 // porcelain v2 branch block already resolves detached HEAD and the
 // upstream of the checked-out branch, so no extra plumbing is needed.
 type Capabilities struct {
-	Detached bool            `json:"detached"`
-	Upstream string          `json:"upstream,omitempty"`
-	CanPush  bool            `json:"canPush"`
-	CanPull  bool            `json:"canPull"`
-	Reason   CapabilityIssue `json:"reason,omitempty"`
+	Detached   bool            `json:"detached"`
+	HasRemotes bool            `json:"hasRemotes"`
+	Upstream   string          `json:"upstream,omitempty"`
+	CanFetch   bool            `json:"canFetch"`
+	CanPush    bool            `json:"canPush"`
+	CanPull    bool            `json:"canPull"`
+	Reason     CapabilityIssue `json:"reason,omitempty"`
 }
 
-// Capabilities reports whether push/pull make sense right now. A branch
-// with no upstream reports IssueNoUpstream so the UI can offer
-// --set-upstream; a detached HEAD reports IssueDetachedHead.
+// Capabilities reports which remote operations make sense right now.
+// Fetch only needs a remote and works on a detached HEAD; push and pull
+// additionally need a current branch with an upstream. Reason names the
+// first blocker in the order detached HEAD, missing remotes, missing
+// upstream, so the UI pairs each disabled button with an explanation.
 func (r *Repo) Capabilities(ctx context.Context) (*Capabilities, error) {
+	remotes, err := r.Remotes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	st, err := r.Status(ctx)
 	if err != nil {
 		return nil, err
 	}
-	c := &Capabilities{Detached: st.Branch.Detached, Upstream: st.Branch.Upstream}
+	c := &Capabilities{
+		Detached:   st.Branch.Detached,
+		HasRemotes: len(remotes) > 0,
+		Upstream:   st.Branch.Upstream,
+	}
+	c.CanFetch = c.HasRemotes
 	switch {
 	case c.Detached:
 		c.Reason = IssueDetachedHead
+	case !c.HasRemotes:
+		c.Reason = IssueNoRemotes
 	case c.Upstream == "":
 		c.Reason = IssueNoUpstream
 	default:
