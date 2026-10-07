@@ -415,20 +415,53 @@ func diffParseError(msg string) error {
 	return &GitError{Code: CodeParseFailed, Message: msg, ExitCode: -1}
 }
 
+// DiffOption configures diff generation (issue #24).
+type DiffOption func(*diffConfig)
+
+type diffConfig struct {
+	unified *int
+}
+
+// WithContextLines requests n lines of surrounding context per hunk,
+// overriding git's default of 3. n may be 0. Untracked-file diffs ignore
+// it: their single synthesized hunk already covers the whole file.
+func WithContextLines(n int) DiffOption {
+	return func(c *diffConfig) { c.unified = &n }
+}
+
+func diffFlags(opts []DiffOption) ([]string, error) {
+	var cfg diffConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	if cfg.unified == nil {
+		return nil, nil
+	}
+	if *cfg.unified < 0 {
+		return nil, &GitError{Code: CodeValidationFailed, Message: "context lines cannot be negative", ExitCode: -1}
+	}
+	return []string{fmt.Sprintf("-U%d", *cfg.unified)}, nil
+}
+
 // DiffWorkingFile returns the diff of one repository-relative path.
 // staged=false compares work tree against the index; staged=true compares
 // the index against HEAD. Untracked files never appear in git diff, so the
 // unstaged side synthesizes their diff against /dev/null from the file
 // bytes, matching the shape git prints once the file is staged - binary
 // heuristic included.
-func (r *Repo) DiffWorkingFile(ctx context.Context, path string, staged bool) (*FileDiff, error) {
+func (r *Repo) DiffWorkingFile(ctx context.Context, path string, staged bool, opts ...DiffOption) (*FileDiff, error) {
 	clean, err := cleanDiffPath(path)
+	if err != nil {
+		return nil, err
+	}
+	unified, err := diffFlags(opts)
 	if err != nil {
 		return nil, err
 	}
 	// :(literal) keeps glob characters in real file names inert: without
 	// it a path such as "weird*.txt" could match unrelated files
 	args := []string{"diff", "--no-ext-diff"}
+	args = append(args, unified...)
 	if staged {
 		args = append(args, "--staged")
 	}
@@ -483,7 +516,7 @@ func diffFileFromOutput(out []byte, path string) (*FileDiff, error) {
 // back to diffing against the empty tree. The single-path pathspec also
 // breaks git's rename pairing, so a renamed file renders as a full add
 // (new side) or delete (old side); DiffCommitFiles carries the R status.
-func (r *Repo) DiffCommitFile(ctx context.Context, hash, path string) (*FileDiff, error) {
+func (r *Repo) DiffCommitFile(ctx context.Context, hash, path string, opts ...DiffOption) (*FileDiff, error) {
 	if err := checkCommitHash(hash); err != nil {
 		return nil, err
 	}
@@ -491,8 +524,13 @@ func (r *Repo) DiffCommitFile(ctx context.Context, hash, path string) (*FileDiff
 	if err != nil {
 		return nil, err
 	}
+	unified, err := diffFlags(opts)
+	if err != nil {
+		return nil, err
+	}
+	pre := append([]string{"--no-ext-diff"}, unified...)
 	out, _, err := runGit(ctx, r.path,
-		showCommitDiffArgs(hash, []string{"--no-ext-diff"}, []string{"--", ":(literal)" + clean})...)
+		showCommitDiffArgs(hash, pre, []string{"--", ":(literal)" + clean})...)
 	if err != nil {
 		return nil, err
 	}

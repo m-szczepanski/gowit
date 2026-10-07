@@ -801,3 +801,56 @@ func TestParseCommitFileStats(t *testing.T) {
 		t.Fatalf("mismatched join: err = %v, want parse_failed", err)
 	}
 }
+
+func TestDiffWorkingFileContextLines(t *testing.T) {
+	dir := initRepo(t)
+	writeFile(t, dir, "c.txt", "1\n2\n3\n4\n5\n")
+	commitAll(t, dir, "base")
+	writeFile(t, dir, "c.txt", "1\n2\nX\n4\n5\n")
+	repo := openRepo(t, dir)
+
+	full, err := repo.DiffWorkingFile(context.Background(), "c.txt", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.Hunks[0].OldCount != 5 {
+		t.Fatalf("default context hunk = %+v, want all 5 lines", full.Hunks[0])
+	}
+
+	zero, err := repo.DiffWorkingFile(context.Background(), "c.txt", false, WithContextLines(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := zero.Hunks[0]; h.Header != "@@ -3 +3 @@" || len(h.Lines) != 2 {
+		t.Fatalf("-U0 hunk = %+v, want only the changed pair", h)
+	}
+
+	if _, _, err := runGit(context.Background(), dir, "add", "c.txt"); err != nil {
+		t.Fatal(err)
+	}
+	one, err := repo.DiffWorkingFile(context.Background(), "c.txt", true, WithContextLines(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := one.Hunks[0]; h.OldStart != 2 || h.OldCount != 3 {
+		t.Fatalf("-U1 staged hunk = %+v, want -2,3", h)
+	}
+
+	if _, err := repo.DiffWorkingFile(context.Background(), "c.txt", false, WithContextLines(-1)); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("err = %v, want validation_failed for negative context", err)
+	}
+}
+
+func TestDiffCommitFileContextLines(t *testing.T) {
+	dir, _, mainHash, _ := mergeRepo(t) // mergeRepo edits line 1 of base.txt in mainHash
+	fd, err := openRepo(t, dir).DiffCommitFile(context.Background(), mainHash, "base.txt", WithContextLines(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := fd.Hunks[0]; h.Header != "@@ -1 +1 @@" || len(h.Lines) != 2 {
+		t.Fatalf("-U0 hunk = %+v, want the del/add pair only", h)
+	}
+	if _, err := openRepo(t, dir).DiffCommitFile(context.Background(), mainHash, "base.txt", WithContextLines(-1)); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("err = %v, want validation_failed", err)
+	}
+}
