@@ -1,4 +1,4 @@
-import {DiscardFiles, GetStatus, StageAll, StageFiles, UnstageAll, UnstageFiles} from '../../wailsjs/go/main/App';
+import {Commit, DiscardFiles, GetStatus, StageAll, StageFiles, UnstageAll, UnstageFiles} from '../../wailsjs/go/main/App';
 import {main} from '../../wailsjs/go/models';
 
 export type StatusResponse = main.StatusResponse;
@@ -44,6 +44,18 @@ export function stageAll(): Promise<StatusResponse> {
 
 export function unstageAll(): Promise<StatusResponse> {
     return UnstageAll().then(unwrapStatus);
+}
+
+/**
+ * Commits the staged index. Unlike the staging calls, no status echo comes
+ * back: the status update arrives as a repo:status-changed event instead
+ * (the Go side nudges its status worker after a successful commit).
+ */
+export async function commit(message: string, amend = false): Promise<void> {
+    const res = await Commit(message, amend);
+    if (res.code) {
+        throw new ApiError(res.code, res.message);
+    }
 }
 
 export function discardFiles(paths: string[]): Promise<StatusResponse> {
