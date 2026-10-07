@@ -668,8 +668,8 @@ func TestStagingAdaptersSurfaceGitAndRepoErrors(t *testing.T) {
 	if res.Code != string(git.CodeCommandFailed) || !strings.Contains(res.Message, "nosuch.txt") {
 		t.Fatalf("bad path StageFiles = %+v, want command_failed naming the path", res)
 	}
-	if res := app.StageFiles([]string{}); res.Code == "" {
-		t.Fatalf("empty paths = %+v, want guard error", res)
+	if res := app.StageFiles([]string{}); res.Code != string(git.CodeValidationFailed) {
+		t.Fatalf("empty paths = %+v, want validation_failed", res)
 	}
 }
 
