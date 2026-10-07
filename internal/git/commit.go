@@ -46,7 +46,7 @@ func (r *Repo) Commit(ctx context.Context, opts CommitOptions) error {
 
 	// runGitStream feeds stdout and stderr from separate goroutines; the
 	// lock keeps the tail consistent and guarantees sequential OnOutput
-	// calls for everyone downstream (including #21's EventsEmit bridge).
+	// calls, so downstream consumers need not be goroutine-safe.
 	var mu sync.Mutex
 	tail := newOutputTail(maxCommitTailLines)
 	onLine := func(line string) {

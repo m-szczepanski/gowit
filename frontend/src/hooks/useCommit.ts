@@ -12,12 +12,16 @@ import {useRepoStore} from '@/stores/repo';
  */
 export function useCommit() {
     const queryClient = useQueryClient();
-    const repoPath = useRepoStore((s) => s.repoPath);
 
     return useMutation({
         mutationFn: ({message, amend}: {message: string; amend?: boolean}) => commit(message, amend),
-        onSettled: () => {
-            if (repoPath !== null) {
+        // same convention as the staging mutations: the repo is captured
+        // when the call starts, so a switch mid-commit cannot leave the
+        // rewritten repo's cache stale
+        onMutate: () => ({repoPath: useRepoStore.getState().repoPath}),
+        onSettled: (_data, _error, _vars, ctx) => {
+            const repoPath = ctx?.repoPath;
+            if (repoPath) {
                 void queryClient.invalidateQueries({queryKey: queryKeys.status(repoPath)});
             }
         }

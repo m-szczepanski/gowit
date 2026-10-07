@@ -19,10 +19,14 @@ export class ApiError extends Error {
  * one error shape. A transport rejection (bindings not ready) passes
  * through as a plain Error.
  */
-function unwrapStatus(res: main.StatusResponse): main.StatusResponse {
+function unwrapCall(res: main.CallResult): void {
     if (res.code) {
         throw new ApiError(res.code, res.message);
     }
+}
+
+function unwrapStatus(res: main.StatusResponse): main.StatusResponse {
+    unwrapCall(res);
     return res;
 }
 
@@ -51,11 +55,8 @@ export function unstageAll(): Promise<StatusResponse> {
  * back: the status update arrives as a repo:status-changed event instead
  * (the Go side nudges its status worker after a successful commit).
  */
-export async function commit(message: string, amend = false): Promise<void> {
-    const res = await Commit(message, amend);
-    if (res.code) {
-        throw new ApiError(res.code, res.message);
-    }
+export function commit(message: string, amend = false): Promise<void> {
+    return Commit(message, amend).then(unwrapCall);
 }
 
 export function discardFiles(paths: string[]): Promise<StatusResponse> {

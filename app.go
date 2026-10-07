@@ -166,13 +166,8 @@ func (a *App) Commit(message string, amend bool) CallResult {
 	if repo == nil {
 		return CallResult{Code: noRepoCode, Message: "no repository open"}
 	}
-	err := a.committer(a.ctx, repo, git.CommitOptions{Message: message, Amend: amend})
-	if err != nil {
-		var gitErr *git.GitError
-		if errors.As(err, &gitErr) {
-			return CallResult{Code: string(gitErr.Code), Message: gitErr.Message}
-		}
-		return CallResult{Code: callFailedCode, Message: err.Error()}
+	if err := a.committer(a.ctx, repo, git.CommitOptions{Message: message, Amend: amend}); err != nil {
+		return callResult(err, callFailedCode)
 	}
 	a.queueStatus()
 	return CallResult{}
@@ -186,6 +181,8 @@ func (a *App) mutate(op func(*git.Repo) error) StatusResponse {
 	if err := op(repo); err != nil {
 		return StatusResponse{CallResult: callResult(err, callFailedCode), Path: repo.Path()}
 	}
+	// the echo reports the repo the op actually ran against, even if the
+	// slot was swapped while the call was in flight
 	return a.statusOf(repo)
 }
 
@@ -203,6 +200,8 @@ func (a *App) currentRepo() *git.Repo {
 	return a.repo
 }
 
+// callResult maps a boundary error to the typed envelope; fallback names
+// the adapter family that swallowed a non-GitError.
 func callResult(err error, fallback string) CallResult {
 	var gitErr *git.GitError
 	if errors.As(err, &gitErr) {
@@ -336,7 +335,8 @@ func (a *App) shutdown(ctx context.Context) {
 }
 
 // OpenFolder shows the native directory picker. An empty Path with no Code
-// means the user cancelled.
+// means the user cancelled. Recording and validation are the caller's
+// job (OpenRepository), so a rejected folder never lands in recents.
 func (a *App) OpenFolder() FolderDialogResult {
 	path, err := a.pickFolder(a.ctx)
 	if err != nil {

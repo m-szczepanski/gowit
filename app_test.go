@@ -28,6 +28,14 @@ func initRepoForAppTest(t *testing.T) string {
 	if out, err := execGitInit(dir); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
+	// repo-local identity: CI runners have none, and Repo.Commit must not
+	// depend on ambient detection (same pin as internal/git's initRepo)
+	if out, err := exec.Command("git", "-C", dir, "config", "user.email", "t@t").CombinedOutput(); err != nil {
+		t.Fatalf("config email: %v: %s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", dir, "config", "user.name", "test").CombinedOutput(); err != nil {
+		t.Fatalf("config name: %v: %s", err, out)
+	}
 	return dir
 }
 
@@ -682,7 +690,7 @@ func initRepoWithCommit(t *testing.T) string {
 	if out, err := exec.Command("git", "-C", dir, "add", "a.txt").CombinedOutput(); err != nil {
 		t.Fatalf("add: %v: %s", err, out)
 	}
-	if out, err := exec.Command("git", "-C", dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base").CombinedOutput(); err != nil {
+	if out, err := exec.Command("git", "-C", dir, "commit", "-qm", "base").CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v: %s", err, out)
 	}
 	return dir
