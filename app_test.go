@@ -1100,3 +1100,17 @@ func TestAppSubmoduleGuardsAndNoRepo(t *testing.T) {
 		t.Fatalf("no repo open: %+v", res)
 	}
 }
+
+func TestGetSubmodulesSurfacesRepoFailure(t *testing.T) {
+	app := subAppFixture(t)
+	repoPath := app.GetSubmodules().Path
+	if repoPath == "" {
+		t.Fatal("fixture repo path missing")
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, ".git", "config"), []byte("not git config\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if res := app.GetSubmodules(); res.Code == "" {
+		t.Fatalf("want typed failure after wrecking config: %+v", res)
+	}
+}

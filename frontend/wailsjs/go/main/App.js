@@ -34,12 +34,20 @@ export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
 }
 
+export function GetSubmodules() {
+  return window['go']['main']['App']['GetSubmodules']();
+}
+
 export function OpenFolder() {
   return window['go']['main']['App']['OpenFolder']();
 }
 
 export function OpenRepository(arg1) {
   return window['go']['main']['App']['OpenRepository'](arg1);
+}
+
+export function OpenSubmodule(arg1) {
+  return window['go']['main']['App']['OpenSubmodule'](arg1);
 }
 
 export function SaveHostToken(arg1, arg2) {
@@ -56,6 +64,26 @@ export function StageAll() {
 
 export function StageFiles(arg1) {
   return window['go']['main']['App']['StageFiles'](arg1);
+}
+
+export function SubmoduleAdd(arg1, arg2) {
+  return window['go']['main']['App']['SubmoduleAdd'](arg1, arg2);
+}
+
+export function SubmoduleDeinit(arg1) {
+  return window['go']['main']['App']['SubmoduleDeinit'](arg1);
+}
+
+export function SubmoduleInitUpdate(arg1) {
+  return window['go']['main']['App']['SubmoduleInitUpdate'](arg1);
+}
+
+export function SubmoduleRemove(arg1) {
+  return window['go']['main']['App']['SubmoduleRemove'](arg1);
+}
+
+export function SubmoduleUpdate(arg1) {
+  return window['go']['main']['App']['SubmoduleUpdate'](arg1);
 }
 
 export function UnstageAll() {
