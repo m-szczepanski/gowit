@@ -320,3 +320,107 @@ func TestConflictStagesUnreadableObjectPropagates(t *testing.T) {
 		t.Fatalf("err = %v, want git show failure propagated", err)
 	}
 }
+
+func TestConflictOperationCleanRepo(t *testing.T) {
+	op, err := openRepo(t, initRepo(t)).ConflictOperation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op != OperationNone {
+		t.Fatalf("op = %q, want none", op)
+	}
+}
+
+func TestConflictOperationMerge(t *testing.T) {
+	op, err := openRepo(t, conflictFixture(t)).ConflictOperation(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op != OperationMerge {
+		t.Fatalf("op = %q, want merge", op)
+	}
+}
+
+func TestConflictOperationMergePersistsAfterResolvingIndex(t *testing.T) {
+	ctx := context.Background()
+	dir := conflictFixture(t)
+	writeFile(t, dir, "a.txt", "fixed\n")
+	gitOut(t, dir, "add", "a.txt")
+	op, err := openRepo(t, dir).ConflictOperation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op != OperationMerge {
+		t.Fatalf("op = %q after staging a resolution, want merge until the operation ends", op)
+	}
+}
+
+func TestConflictOperationCherryPick(t *testing.T) {
+	ctx := context.Background()
+	dir, oids := conflictPickRepo(t)
+	r := openRepo(t, dir)
+	if err := r.CherryPick(ctx, oids[:2], CherryPickOptions{}); !errors.Is(err, ErrCherryPickConflict) {
+		t.Fatal(err)
+	}
+	op, err := r.ConflictOperation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op != OperationCherryPick {
+		t.Fatalf("op = %q, want cherry-pick", op)
+	}
+}
+
+// rebaseConflictRepo stops a main-onto-topic rebase on a content conflict.
+func rebaseConflictRepo(t *testing.T, extra ...string) string {
+	t.Helper()
+	dir := initRepo(t)
+	writeFile(t, dir, "a.txt", "base\n")
+	commitAll(t, dir, "base")
+	gitOut(t, dir, "checkout", "-qb", "topic")
+	writeFile(t, dir, "a.txt", "topic\n")
+	commitAll(t, dir, "topic change")
+	gitOut(t, dir, "checkout", "-q", "main")
+	writeFile(t, dir, "a.txt", "main\n")
+	commitAll(t, dir, "main change")
+	args := append([]string{"rebase"}, extra...)
+	_, _, err := runGit(context.Background(), dir, append(args, "topic")...)
+	if err == nil {
+		t.Fatal("fixture rebase must stop conflicted")
+	}
+	return dir
+}
+
+func TestConflictOperationRebase(t *testing.T) {
+	for _, backend := range [][]string{nil, {"--apply"}} {
+		dir := rebaseConflictRepo(t, backend...)
+		op, err := openRepo(t, dir).ConflictOperation(context.Background())
+		if err != nil {
+			t.Fatalf("backend %v: %v", backend, err)
+		}
+		if op != OperationRebase {
+			t.Fatalf("backend %v op = %q, want rebase", backend, op)
+		}
+	}
+}
+
+func TestConflictOperationStatFailurePropagates(t *testing.T) {
+	skipWithoutUnixPerms(t)
+	r := openRepo(t, initRepo(t))
+	gitdir := filepath.Join(r.path, ".git")
+	if err := os.Chmod(gitdir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(gitdir, 0o755) })
+	if _, err := r.ConflictOperation(context.Background()); err == nil {
+		t.Fatal("want stat failure propagated")
+	}
+}
+
+func TestConflictOperationCtxKill(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := openRepo(t, conflictFixture(t)).ConflictOperation(ctx); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want timeout", err)
+	}
+}

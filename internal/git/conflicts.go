@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // Conflict is one unmerged path. A nil stage means that side has no
@@ -113,4 +114,70 @@ func (r *Repo) ConflictStages(ctx context.Context, path string) (*ConflictConten
 	}
 	cc.Working, cc.WorkingExists = working, true
 	return cc, nil
+}
+
+// ConflictOperation names the git operation that owns the current
+// conflict state. It decides which continue/abort/skip action is correct.
+type ConflictOperation string
+
+const (
+	OperationNone       ConflictOperation = ""
+	OperationMerge      ConflictOperation = "merge"
+	OperationRebase     ConflictOperation = "rebase"
+	OperationCherryPick ConflictOperation = "cherry-pick"
+)
+
+// ConflictOperation detects the driver from git's state files. Rebase is
+// checked first because its sequencer also writes CHERRY_PICK_HEAD on
+// some backends; only a plain cherry-pick leaves it alone at top level.
+func (r *Repo) ConflictOperation(ctx context.Context) (ConflictOperation, error) {
+	rebase, err := r.gitPathExists(ctx, "rebase-merge")
+	if err != nil {
+		return OperationNone, err
+	}
+	if !rebase {
+		rebase, err = r.gitPathExists(ctx, "rebase-apply")
+		if err != nil {
+			return OperationNone, err
+		}
+	}
+	if rebase {
+		return OperationRebase, nil
+	}
+	pick, err := r.gitPathExists(ctx, "CHERRY_PICK_HEAD")
+	if err != nil {
+		return OperationNone, err
+	}
+	if pick {
+		return OperationCherryPick, nil
+	}
+	merge, err := r.gitPathExists(ctx, "MERGE_HEAD")
+	if err != nil {
+		return OperationNone, err
+	}
+	if merge {
+		return OperationMerge, nil
+	}
+	return OperationNone, nil
+}
+
+// gitPathExists resolves a state name through rev-parse --git-path so
+// linked worktrees and custom GIT_DIR layouts point at the right file,
+// then stats it. A missing state file is false, not an error.
+func (r *Repo) gitPathExists(ctx context.Context, name string) (bool, error) {
+	out, _, err := runGit(ctx, r.path, "rev-parse", "--git-path", name)
+	if err != nil {
+		return false, err
+	}
+	p := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(r.path, filepath.FromSlash(p))
+	}
+	if _, err := os.Stat(p); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
