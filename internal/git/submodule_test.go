@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -233,6 +234,7 @@ func nestedState(t *testing.T, super string) SubmoduleState {
 // mirroring what a user opts into for local development trees.
 func subFixtureWithNested(t *testing.T) (super, seed string) {
 	t.Helper()
+	allowFileTransport(t)
 	super, seed = subFixture(t)
 	tmp := filepath.Dir(super)
 	seed2 := filepath.Join(tmp, "seed2.git")
@@ -251,8 +253,17 @@ func subFixtureWithNested(t *testing.T) (super, seed string) {
 	gitOut(t, sub, "commit", "-qm", "add inner")
 	gitOut(t, super, "add", "sub1")
 	gitOut(t, super, "commit", "-qm", "sub records inner")
-	gitOut(t, super, "config", "protocol.file.allow", "always")
 	return super, seed
+}
+
+// allowFileTransport opts the test process (and every git child it
+// spawns) into the local file transport via the documented env config;
+// production code never widens this policy itself.
+func allowFileTransport(t *testing.T) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "protocol.file.allow")
+	t.Setenv("GIT_CONFIG_VALUE_0", "always")
 }
 
 func TestSubmoduleUpdatePath(t *testing.T) {
@@ -299,5 +310,126 @@ func TestOpenSubmodule(t *testing.T) {
 		t.Fatalf("uninitialized submodule: %v, want not_a_repository", err)
 	} else if !strings.Contains(err.Error(), "not initialized") {
 		t.Fatalf("message should explain the uninitialized state: %v", err)
+	}
+}
+
+func TestSubmoduleUpdatePathCtxKill(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	super, _ := subFixture(t)
+	if err := openRepo(t, super).SubmoduleUpdatePath(ctx, "sub1"); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want timeout", err)
+	}
+}
+
+func TestSubmoduleAddLifecycle(t *testing.T) {
+	ctx := context.Background()
+	allowFileTransport(t)
+	super, _ := subFixture(t)
+	tmp := filepath.Dir(super)
+	deep2 := filepath.Join(tmp, "deep2")
+	gitOut(t, tmp, "init", "-b", "main", deep2)
+	setGitIdentity(t, deep2)
+	writeFile(t, deep2, "d2.txt", "two\n")
+	commitAll(t, deep2, "two")
+
+	r := openRepo(t, super)
+	if err := r.SubmoduleAdd(ctx, deep2, "sub2"); err != nil {
+		t.Fatalf("SubmoduleAdd: %v", err)
+	}
+	if got := subState(t, super, "sub2"); got != SubmoduleOK {
+		t.Fatalf("state after add = %q", got)
+	}
+	// add stages but does not commit: the user owns the history
+	out := gitOut(t, super, "diff", "--cached", "--name-only")
+	if !strings.Contains(out, ".gitmodules") || !strings.Contains(out, "sub2") {
+		t.Fatalf("staged records = %q, want .gitmodules and sub2", out)
+	}
+	gitOut(t, super, "commit", "-qm", "add sub2")
+
+	if err := r.SubmoduleDeinit(ctx, "sub2"); err != nil {
+		t.Fatalf("deinit: %v", err)
+	}
+	if got := subState(t, super, "sub2"); got != SubmoduleUninitialized {
+		t.Fatalf("state after deinit = %q", got)
+	}
+	if err := r.SubmoduleRemove(ctx, "sub2"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	list, err := r.Submodules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range list {
+		if s.Path == "sub2" {
+			t.Fatalf("sub2 survived removal: %+v", list)
+		}
+	}
+	leftovers, _, cfgErr := runGit(context.Background(), super, "config", "-f", ".gitmodules", "--get-regexp", "submodule\\.sub2\\.")
+	if strings.TrimSpace(string(leftovers)) != "" {
+		t.Fatalf(".gitmodules leftovers: %q", leftovers)
+	}
+	if cfgErr != nil && !errors.Is(cfgErr, ErrCommandFailed) {
+		t.Fatalf("config probe: %v", cfgErr)
+	}
+	if _, err := os.Stat(filepath.Join(super, ".git", "modules", "sub2")); !os.IsNotExist(err) {
+		t.Fatalf("module git dir left behind: %v", err)
+	}
+	if got := fileContent(t, super, "README"); got != "top\n" {
+		t.Fatalf("removal touched the work tree: README = %q", got)
+	}
+}
+
+func TestSubmoduleLifecycleGuards(t *testing.T) {
+	ctx := context.Background()
+	super, _ := subFixture(t)
+	r := openRepo(t, super)
+	if err := r.SubmoduleAdd(ctx, "https://example.com/x.git", "../escape"); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("add escape path: %v", err)
+	}
+	if err := r.SubmoduleAdd(ctx, "-uhttps://evil", "ok/dir"); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("add dash url: %v", err)
+	}
+	if err := r.SubmoduleDeinit(ctx, "nope"); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("deinit unregistered: %v", err)
+	}
+	if err := r.SubmoduleRemove(ctx, "nope"); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("remove unregistered: %v", err)
+	}
+}
+
+func TestSubmoduleRemoveDirtyPointerFailsAtDeinit(t *testing.T) {
+	ctx := context.Background()
+	super, _ := subFixture(t)
+	sub := filepath.Join(super, "sub1")
+	setGitIdentity(t, sub)
+	writeFile(t, sub, "new.txt", "n\n")
+	commitAll(t, sub, "sub moved")
+
+	r := openRepo(t, super)
+	if err := r.SubmoduleRemove(ctx, "sub1"); !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want deinit refusal on the dirty pointer", err)
+	}
+	// refusal must leave everything intact for the user to salvage
+	if got := subState(t, super, "sub1"); got != SubmoduleModified {
+		t.Fatalf("state after refusal = %q, want still modified", got)
+	}
+}
+
+func TestSubmoduleRemoveUnreadableModuleDirPropagates(t *testing.T) {
+	skipWithoutUnixPerms(t)
+	ctx := context.Background()
+	super, _ := subFixture(t)
+	module := filepath.Join(super, ".git", "modules", "sub1")
+	if err := os.Chmod(module, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(module, 0o755) })
+	err := openRepo(t, super).SubmoduleRemove(ctx, "sub1")
+	if err == nil {
+		t.Fatal("want module data removal failure propagated")
+	}
+	if _, statErr := os.Stat(module); statErr != nil {
+		t.Fatalf("failed remove should not have forced the deletion away: %v", statErr)
 	}
 }

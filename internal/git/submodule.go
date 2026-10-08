@@ -159,3 +159,92 @@ func (r *Repo) registeredSubmodule(ctx context.Context, path string) (string, er
 	}
 	return "", &GitError{Code: CodeValidationFailed, Message: "not a registered submodule: " + clean, ExitCode: -1}
 }
+
+// SubmoduleAdd registers and clones a new submodule, staging .gitmodules
+// and the gitlink; committing that stage stays the user's call, exactly
+// like raw git. Local-path submodules require the caller's git to allow
+// the file transport.
+func (r *Repo) SubmoduleAdd(ctx context.Context, url, path string) error {
+	clean, err := cleanRepoPath(path)
+	if err != nil {
+		return err
+	}
+	if err := guardOptionLike(url, "submodule URL"); err != nil {
+		return err
+	}
+	_, _, err = runGit(ctx, r.path, "submodule", "add", "--", url, clean)
+	return err
+}
+
+// SubmoduleDeinit clears a submodule's work tree while keeping its
+// registration and module data, so update --init can bring it back.
+func (r *Repo) SubmoduleDeinit(ctx context.Context, path string) error {
+	clean, err := r.registeredSubmodule(ctx, path)
+	if err != nil {
+		return err
+	}
+	_, _, err = runGit(ctx, r.path, "submodule", "deinit", "--", clean)
+	return err
+}
+
+// SubmoduleRemove unregisters a submodule completely: deinit, index and
+// work-tree removal, .gitmodules section, and the stored module data.
+// Destructive (a dirty pointer is discarded by the removal), so the UI
+// must confirm before calling.
+func (r *Repo) SubmoduleRemove(ctx context.Context, path string) error {
+	clean, err := r.registeredSubmodule(ctx, path)
+	if err != nil {
+		return err
+	}
+	name := r.submoduleName(ctx, clean)
+	if _, _, err := runGit(ctx, r.path, "submodule", "deinit", "--", clean); err != nil {
+		return err
+	}
+	if _, _, err := runGit(ctx, r.path, "rm", "--", clean); err != nil {
+		return err
+	}
+	if name != "" {
+		// git rm usually prunes the .gitmodules section itself; tolerate
+		// the section already being gone, keep other config failures loud
+		if _, _, err := runGit(ctx, r.path, "config", "-f", ".gitmodules", "--remove-section", "submodule."+name); err != nil && !strings.Contains(err.Error(), "no such section") {
+			return err
+		}
+		if p, err := r.gitPath(ctx, "modules/"+name); err == nil {
+			if err := os.RemoveAll(p); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// submoduleName maps a path back to its .gitmodules section name. It is
+// best-effort: an unreadable or unmatched config yields "", which only
+// skips the section/module-data cleanup that git rm already performs in
+// the normal case.
+func (r *Repo) submoduleName(ctx context.Context, path string) string {
+	out, _, err := runGit(ctx, r.path, "config", "-f", ".gitmodules", "--get-regexp", `submodule\..*\.path$`)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		key, value, ok := strings.Cut(line, " ")
+		if !ok || strings.TrimSpace(value) != path {
+			continue
+		}
+		return strings.TrimSuffix(strings.TrimPrefix(key, "submodule."), ".path")
+	}
+	return ""
+}
+
+func (r *Repo) gitPath(ctx context.Context, name string) (string, error) {
+	out, _, err := runGit(ctx, r.path, "rev-parse", "--git-path", name)
+	if err != nil {
+		return "", err
+	}
+	p := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(r.path, filepath.FromSlash(p))
+	}
+	return p, nil
+}
