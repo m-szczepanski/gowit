@@ -163,7 +163,7 @@ func conflictPickRepo(t *testing.T) (string, []string) {
 	return dir, []string{clean, clash, tail}
 }
 
-func mustConflictSequence(t *testing.T, r *Repo, oids []string) error {
+func startConflictSequence(t *testing.T, r *Repo, oids []string) error {
 	t.Helper()
 	return r.CherryPick(context.Background(), oids[:2], CherryPickOptions{})
 }
@@ -177,13 +177,28 @@ func TestCherryPickStateIdle(t *testing.T) {
 	if st.InProgress || st.Head != "" || len(st.ConflictPaths) != 0 {
 		t.Fatalf("state = %+v, want idle", st)
 	}
+	if err := openRepo(t, dir).CherryPickAbort(context.Background()); !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("abort outside a sequence = %v, want command_failed", err)
+	}
+}
+
+func TestCherryPickListOrderRespected(t *testing.T) {
+	ctx := context.Background()
+	dir, oids := featureRepo(t)
+	r := openRepo(t, dir)
+	if err := r.CherryPick(ctx, []string{oids[1], oids[0]}, CherryPickOptions{}); err != nil {
+		t.Fatalf("reverse list pick: %v", err)
+	}
+	if subjects := gitOut(t, dir, "log", "--format=%s", "-2"); subjects != "first pick\nsecond pick" {
+		t.Fatalf("log newest-first = %q, want given order preserved", subjects)
+	}
 }
 
 func TestCherryPickConflictTypedWithState(t *testing.T) {
 	ctx := context.Background()
 	dir, oids := conflictPickRepo(t)
 	r := openRepo(t, dir)
-	err := mustConflictSequence(t, r, oids)
+	err := startConflictSequence(t, r, oids)
 	if !errors.Is(err, ErrCherryPickConflict) {
 		t.Fatalf("err = %v, want cherry_pick_conflict", err)
 	}
@@ -211,7 +226,7 @@ func TestCherryPickAbortRollsBackSequence(t *testing.T) {
 	dir, oids := conflictPickRepo(t)
 	r := openRepo(t, dir)
 	before := gitOut(t, dir, "rev-parse", "HEAD")
-	if err := mustConflictSequence(t, r, oids); !errors.Is(err, ErrCherryPickConflict) {
+	if err := startConflictSequence(t, r, oids); !errors.Is(err, ErrCherryPickConflict) {
 		t.Fatal(err)
 	}
 	if err := r.CherryPickAbort(ctx); err != nil {
@@ -236,7 +251,7 @@ func TestCherryPickResolveAndContinue(t *testing.T) {
 	ctx := context.Background()
 	dir, oids := conflictPickRepo(t)
 	r := openRepo(t, dir)
-	if err := mustConflictSequence(t, r, oids); !errors.Is(err, ErrCherryPickConflict) {
+	if err := startConflictSequence(t, r, oids); !errors.Is(err, ErrCherryPickConflict) {
 		t.Fatal(err)
 	}
 	writeFile(t, dir, "a.txt", "merged by hand\n")
@@ -261,14 +276,13 @@ func TestCherryPickResolveAndContinue(t *testing.T) {
 	if got := gitOut(t, dir, "rev-list", "--count", "HEAD"); got != "4" {
 		t.Fatalf("continue must finish both picks, count = %s, want 4", got)
 	}
-	_ = oids
 }
 
 func TestCherryPickContinueWithoutResolutionFails(t *testing.T) {
 	ctx := context.Background()
 	dir, oids := conflictPickRepo(t)
 	r := openRepo(t, dir)
-	if err := mustConflictSequence(t, r, oids); !errors.Is(err, ErrCherryPickConflict) {
+	if err := startConflictSequence(t, r, oids); !errors.Is(err, ErrCherryPickConflict) {
 		t.Fatal(err)
 	}
 	err := r.CherryPickContinue(ctx)
@@ -309,7 +323,6 @@ func TestCherryPickSkipGoesToNext(t *testing.T) {
 	if got := fileContent(t, dir, "a.txt"); got != "main version\n" {
 		t.Fatalf("skipped clash must not touch a.txt, got %q", got)
 	}
-	_ = oids
 }
 
 func TestCherryPickAlreadyAppliedIsTypedEmpty(t *testing.T) {

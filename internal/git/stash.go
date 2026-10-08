@@ -2,7 +2,6 @@ package git
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -124,7 +123,7 @@ func (r *Repo) StashApply(ctx context.Context, idx int) error {
 		return err
 	}
 	_, _, err = runGit(ctx, r.path, "stash", "apply", ref)
-	return stashConflict(err)
+	return specializeConflict(err, CodeStashConflict)
 }
 
 // StashPop restores and drops the entry. git refuses the drop while the
@@ -135,7 +134,7 @@ func (r *Repo) StashPop(ctx context.Context, idx int) error {
 		return err
 	}
 	_, _, err = runGit(ctx, r.path, "stash", "pop", ref)
-	return stashConflict(err)
+	return specializeConflict(err, CodeStashConflict)
 }
 
 // StashDrop removes the entry without touching the work tree.
@@ -153,17 +152,6 @@ func stashRef(idx int) (string, error) {
 		return "", &GitError{Code: CodeValidationFailed, Message: "stash index cannot be negative", ExitCode: -1}
 	}
 	return fmt.Sprintf("stash@{%d}", idx), nil
-}
-
-// stashConflict upgrades the merge-conflict shape (apply/pop printing
-// CONFLICT) to ErrStashConflict; the untracked-collision failure already
-// arrives classified from classify.
-func stashConflict(err error) error {
-	var ge *GitError
-	if errors.As(err, &ge) && ge.Code == CodeConflict {
-		return &GitError{Code: CodeStashConflict, Message: ge.Message, ExitCode: ge.ExitCode}
-	}
-	return err
 }
 
 // StashClear deletes every stash entry. Destructive without a git-side

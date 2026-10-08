@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -78,6 +79,8 @@ func classify(ctx context.Context, output string, exitCode int) *GitError {
 	case strings.Contains(output, "no tracking information"),
 		strings.Contains(output, "no upstream"):
 		code = CodeNoUpstream
+	// git never prints CONFLICT and the cherry-pick empty-stop notice in
+	// one run: the sequencer halts at the first failure.
 	case strings.Contains(output, "CONFLICT ("):
 		code = CodeConflict
 	case strings.Contains(output, "cherry-pick is now empty"):
@@ -103,6 +106,17 @@ func guardOptionLike(value, label string) error {
 		return &GitError{Code: CodeValidationFailed, Message: label + " cannot start with a dash: " + value, ExitCode: -1}
 	}
 	return nil
+}
+
+// specializeConflict upgrades the generic merge-conflict classification to
+// a command-specific code so callers can errors.Is their own sentinel:
+// stash apply and cherry-pick mean different conflicts downstream.
+func specializeConflict(err error, code ErrorCode) error {
+	var ge *GitError
+	if errors.As(err, &ge) && ge.Code == CodeConflict {
+		return &GitError{Code: code, Message: ge.Message, ExitCode: ge.ExitCode}
+	}
+	return err
 }
 
 // parseFailed builds the typed error both the porcelain and log-output

@@ -2,7 +2,6 @@ package git
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"strconv"
 )
@@ -16,9 +15,10 @@ type CherryPickOptions struct {
 	Mainline       int  `json:"mainline"`
 }
 
-// CherryPick applies the given commits or revision ranges, in git's own
-// oldest-first order. It moves HEAD, which the watcher already tracks, so
-// status, branch and log refreshes ride the #17 flow.
+// CherryPick applies the given commits or revision ranges: a range expands
+// oldest-first, an explicit list keeps the given order. HEAD moves, so the
+// watcher's #17 status refresh fires; branch and log caches ride the same
+// event only once #53 wires their invalidation, and stay stale until then.
 func (r *Repo) CherryPick(ctx context.Context, refs []string, opts CherryPickOptions) error {
 	if len(refs) == 0 {
 		return &GitError{Code: CodeValidationFailed, Message: "at least one commit ref required", ExitCode: -1}
@@ -40,7 +40,7 @@ func (r *Repo) CherryPick(ctx context.Context, refs []string, opts CherryPickOpt
 	}
 	args = slices.Concat(args, refs)
 	_, _, err := runGit(ctx, r.path, args...)
-	return cherryPickErr(err)
+	return specializeConflict(err, CodeCherryPickConflict)
 }
 
 // CherryPickState reports a stopped or running sequence: the commit being
@@ -77,10 +77,11 @@ func (r *Repo) CherryPickState(ctx context.Context) (*CherryPickState, error) {
 // the rest of the sequence.
 func (r *Repo) CherryPickContinue(ctx context.Context) error {
 	_, _, err := runGit(ctx, r.path, "cherry-pick", "--continue")
-	return cherryPickErr(err)
+	return specializeConflict(err, CodeCherryPickConflict)
 }
 
 // CherryPickAbort cancels the sequence and returns to its starting point.
+// Abort never reaches a pick, so there is no conflict to specialize.
 func (r *Repo) CherryPickAbort(ctx context.Context) error {
 	_, _, err := runGit(ctx, r.path, "cherry-pick", "--abort")
 	return err
@@ -89,17 +90,9 @@ func (r *Repo) CherryPickAbort(ctx context.Context) error {
 // CherryPickSkip drops the current commit and proceeds with the rest.
 func (r *Repo) CherryPickSkip(ctx context.Context) error {
 	_, _, err := runGit(ctx, r.path, "cherry-pick", "--skip")
-	return cherryPickErr(err)
+	return specializeConflict(err, CodeCherryPickConflict)
 }
 
-// cherryPickErr specializes the generic merge conflict for the cherry-pick
-// sequencer; the empty-commit stop already arrives typed from classify,
-// and git's "would overwrite local changes" refusal stays command_failed
-// because it touches nothing, so it is a refusal, not a conflict.
-func cherryPickErr(err error) error {
-	var ge *GitError
-	if errors.As(err, &ge) && ge.Code == CodeConflict {
-		return &GitError{Code: CodeCherryPickConflict, Message: ge.Message, ExitCode: ge.ExitCode}
-	}
-	return err
-}
+// The empty-commit stop arrives typed from classify; git's "would overwrite
+// local changes" refusal stays command_failed because it touches nothing,
+// so it is a refusal, not a conflict.
