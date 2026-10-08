@@ -2,6 +2,9 @@ package git
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -9,8 +12,8 @@ import (
 
 // conflictFixture merges two diverged branches so three conflict shapes
 // coexist: a.txt content/content (UU), n.txt add/add (AA, no base),
-// f.txt rename/delete (DU: side mv e.txt->f.txt, main rm e.txt; no ours
-// stage, no working file).
+// f.txt rename/delete (DU: side mv e.txt->f.txt, main rm e.txt; stages
+// 1 and 3 only, the surviving copy stays under the new name).
 func conflictFixture(t *testing.T) string {
 	t.Helper()
 	dir := initRepo(t)
@@ -161,5 +164,159 @@ func TestConflictsCleanRepo(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Fatalf("got %+v, want none", list)
+	}
+}
+
+func conflictContentMap(t *testing.T, dir, path string) map[string]string {
+	t.Helper()
+	cc, err := openRepo(t, dir).ConflictStages(context.Background(), path)
+	if err != nil {
+		t.Fatalf("ConflictStages(%s): %v", path, err)
+	}
+	got := map[string]string{}
+	for stage, data := range cc.Stages {
+		got[strconv.Itoa(stage)] = string(data)
+	}
+	if cc.WorkingExists {
+		got["working"] = string(cc.Working)
+	}
+	return got
+}
+
+func TestConflictStagesContentConflict(t *testing.T) {
+	got := conflictContentMap(t, conflictFixture(t), "a.txt")
+	want := map[string]string{"1": "base\n", "2": "main\n", "3": "side\n"}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("a.txt[%s] = %q, want %q", k, got[k], v)
+		}
+	}
+	working := got["working"]
+	if !strings.Contains(working, "<<<<<<<") || !strings.Contains(working, "main\n") || !strings.Contains(working, "side\n") {
+		t.Fatalf("merged working file lacks markers or sides: %q", working)
+	}
+}
+
+func TestConflictStagesAddAdd(t *testing.T) {
+	got := conflictContentMap(t, conflictFixture(t), "n.txt")
+	if _, ok := got["1"]; ok {
+		t.Fatalf("add/add must have no base stage, got %q", got["1"])
+	}
+	if got["2"] != "main\n" || got["3"] != "side\n" {
+		t.Fatalf("n.txt ours/theirs = %q/%q", got["2"], got["3"])
+	}
+}
+
+func TestConflictStagesRenameDelete(t *testing.T) {
+	dir := conflictFixture(t)
+	cc, err := openRepo(t, dir).ConflictStages(context.Background(), "f.txt")
+	if err != nil {
+		t.Fatalf("ConflictStages(f.txt): %v", err)
+	}
+	// git leaves the surviving side's file in the work tree
+	if !cc.WorkingExists || string(cc.Working) != "e\n" {
+		t.Fatalf("f.txt working = %q exists=%v, want e present", cc.Working, cc.WorkingExists)
+	}
+	if string(cc.Stages[1]) != "e\n" || string(cc.Stages[3]) != "e\n" {
+		t.Fatalf("f.txt stages = %v, want base and theirs = e", cc.Stages)
+	}
+	if _, ok := cc.Stages[2]; ok {
+		t.Fatalf("f.txt must have no ours stage")
+	}
+}
+
+func TestConflictStagesMissingWorkingFile(t *testing.T) {
+	dir := conflictFixture(t)
+	if err := os.Remove(filepath.Join(dir, "a.txt")); err != nil {
+		t.Fatal(err)
+	}
+	cc, err := openRepo(t, dir).ConflictStages(context.Background(), "a.txt")
+	if err != nil {
+		t.Fatalf("ConflictStages after user deletes: %v", err)
+	}
+	if cc.WorkingExists || cc.Working != nil {
+		t.Fatalf("absent file must read as missing, got exists=%v %q", cc.WorkingExists, cc.Working)
+	}
+	if len(cc.Stages) != 3 {
+		t.Fatalf("stages survive the work-tree deletion, got %v", cc.Stages)
+	}
+}
+
+func TestConflictStagesGuards(t *testing.T) {
+	ctx := context.Background()
+	dir := conflictFixture(t)
+	r := openRepo(t, dir)
+
+	notConflict := &GitError{Code: CodeValidationFailed}
+	_, err := r.ConflictStages(ctx, "e.txt")
+	ge, ok := err.(*GitError)
+	if !ok || ge.Code != notConflict.Code || !strings.Contains(ge.Message, "not conflicted") {
+		t.Fatalf("err = %v, want validation_failed not conflicted", err)
+	}
+	for _, bad := range []string{"", "../escape", "/abs"} {
+		if _, err := r.ConflictStages(ctx, bad); !errors.Is(err, ErrValidationFailed) {
+			t.Fatalf("ConflictStages(%q) = %v, want validation_failed", bad, err)
+		}
+	}
+}
+
+func TestConflictsCtxKill(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := openRepo(t, conflictFixture(t)).Conflicts(ctx); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want timeout", err)
+	}
+}
+
+func TestConflictStagesCtxKill(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := openRepo(t, conflictFixture(t)).ConflictStages(ctx, "a.txt")
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("err = %v, want timeout", err)
+	}
+}
+
+func TestConflictsSkipsNonConflictFiles(t *testing.T) {
+	dir := conflictFixture(t)
+	writeFile(t, dir, "plain.txt", "dirt\n")
+	list, err := openRepo(t, dir).Conflicts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 3 {
+		t.Fatalf("dirty non-conflict file leaked into conflicts: %+v", list)
+	}
+}
+
+func TestConflictStagesUnreadableWorkingPath(t *testing.T) {
+	skipWithoutUnixPerms(t)
+	dir := conflictFixture(t)
+	victim := filepath.Join(dir, "a.txt")
+	if err := os.Remove(victim); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(victim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(victim) })
+	_, err := openRepo(t, dir).ConflictStages(context.Background(), "a.txt")
+	if err == nil || os.IsNotExist(err) {
+		t.Fatalf("err = %v, want the directory read error propagated", err)
+	}
+}
+
+func TestConflictStagesUnreadableObjectPropagates(t *testing.T) {
+	skipWithoutUnixPerms(t)
+	dir := conflictFixture(t)
+	oid := gitOut(t, dir, "rev-parse", ":2:a.txt")
+	obj := filepath.Join(dir, ".git", "objects", oid[:2], oid[2:])
+	if err := os.Chmod(obj, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(obj, 0o444) })
+	_, err := openRepo(t, dir).ConflictStages(context.Background(), "a.txt")
+	if !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want git show failure propagated", err)
 	}
 }

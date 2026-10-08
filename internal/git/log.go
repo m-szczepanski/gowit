@@ -120,7 +120,7 @@ func (r *Repo) Log(ctx context.Context, opts LogOptions) ([]Commit, error) {
 	}
 	path := ""
 	if opts.Path != "" {
-		clean, err := cleanDiffPath(opts.Path)
+		clean, err := cleanRepoPath(opts.Path)
 		if err != nil {
 			return nil, err
 		}
