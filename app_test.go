@@ -882,6 +882,9 @@ func (f *fakeSecrets) Set(host, token string) error {
 }
 
 func (f *fakeSecrets) Remove(host string) error {
+	if f.err != nil {
+		return f.err
+	}
 	delete(f.data, host)
 	return nil
 }
@@ -912,6 +915,11 @@ func TestSaveClearHostToken(t *testing.T) {
 	if res := app.ClearHostToken("github.com"); res.Code != "" {
 		t.Fatalf("clear = %+v", res)
 	}
+	fake.err = errors.New("keychain locked")
+	if res := app.ClearHostToken("github.com"); res.Code != callFailedCode {
+		t.Fatalf("clear with store failure = %+v, want call_failed", res)
+	}
+	fake.err = nil
 	if status := app.GetHostToken("github.com"); status.Found || status.Code != "" {
 		t.Fatalf("after clear = %+v, want not found without error", status)
 	}

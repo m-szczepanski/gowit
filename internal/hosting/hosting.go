@@ -13,9 +13,11 @@ import (
 	"time"
 )
 
-// Kind names a hosting flavor. Classification of self-hosted instances
-// is heuristic (host-label anchored); API probes in the concrete
-// providers (#67, #68) are the source of truth.
+// Kind names a hosting flavor. Classification is host-label heuristic:
+// "github.com"/"*.github.com"/"github.<something>" reads as GitHub, and
+// likewise for GitLab; a spoofed host like github.com.evil.example
+// classifies as GitHub but is harmless because tokens are keyed by the
+// exact host and #67/#68 API probes are the source of truth.
 type Kind string
 
 const (
@@ -41,11 +43,11 @@ const (
 // RateLimit carry provider detail for the UI; RetryAfter tells callers
 // when a rate-limited request may succeed.
 type Error struct {
-	Kind       ErrorKind `json:"kind"`
-	Message    string    `json:"message"`
-	Status     int       `json:"status,omitempty"`
-	RetryAfter int       `json:"retryAfterSeconds,omitempty"`
-	RateLimit  *RateLimit
+	Kind       ErrorKind  `json:"kind"`
+	Message    string     `json:"message"`
+	Status     int        `json:"status,omitempty"`
+	RetryAfter int        `json:"retryAfterSeconds,omitempty"`
+	RateLimit  *RateLimit `json:"rateLimit,omitempty"`
 	Err        error
 }
 
@@ -92,31 +94,17 @@ type ChangeRef struct {
 	Head   string `json:"head"`
 }
 
-// MergeStrategy selects how the provider integrates a change on merge.
-type MergeStrategy string
-
-const (
-	MergeDefault MergeStrategy = ""
-	MergeSquash  MergeStrategy = "squash"
-	MergeRebase  MergeStrategy = "rebase"
-)
-
-// MergeOptions carries the user's merge intent. Message empty keeps the
-// provider's default.
-type MergeOptions struct {
-	Strategy MergeStrategy `json:"strategy"`
-	Message  string        `json:"message"`
-}
-
-// Provider is the seam GitHub (#67) and GitLab (#68) implement. Remote
-// pins the repository the provider instance talks to.
+// Provider is the seam GitHub (#67) and GitLab (#68) implement. An
+// instance is pinned to one host (kind + identity + token source); the
+// repository travels with every call so one instance can serve several
+// remotes of the same host.
 type Provider interface {
 	Kind() Kind
 	Host() string
 	WebURL(r Remote) string
-	ListForBranch(ctx context.Context, branch string) ([]ChangeRef, error)
-	Status(ctx context.Context, ref ChangeRef) (ChangeStatus, error)
-	Merge(ctx context.Context, ref ChangeRef, opts MergeOptions) error
+	ListChanges(ctx context.Context, r Remote) ([]ChangeRef, error)
+	GetForBranch(ctx context.Context, r Remote, branch string) ([]ChangeRef, error)
+	Status(ctx context.Context, r Remote, ref ChangeRef) (ChangeStatus, error)
 }
 
 // ChangeStatus is the checklist view: CI/review state the UI renders

@@ -53,6 +53,8 @@ Detailed architecture and technical decisions: [`ARCHITECTURE.md`](./ARCHITECTUR
 - Node.js ≥ 20
 - `git` installed and available on the system PATH
 - [Wails CLI](https://wails.io/docs/gettingstarted/installation)
+- OS keychain access for GitHub/GitLab tokens (on Linux: a Secret
+  Service provider such as KWallet or gnome-keyring over D-Bus)
 
 ## Development setup
 

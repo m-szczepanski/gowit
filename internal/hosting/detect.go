@@ -5,9 +5,11 @@ import (
 	"strings"
 )
 
-// Remote is a classified hosting coordinate parsed from a git remote URL.
-// Owner keeps GitLab subgroup nesting ("group/sub"); credentials embedded
-// in the URL are dropped, never carried.
+// Remote is a classified hosting coordinate parsed from a git remote
+// URL. Owner keeps GitLab subgroup nesting ("group/sub") by taking the
+// last path segment as the repo; pasted browser URLs with trailing paths
+// (/settings) therefore misread and are out of scope. Credentials
+// embedded in the URL are dropped, never carried.
 type Remote struct {
 	Kind  Kind   `json:"kind"`
 	Host  string `json:"host"`

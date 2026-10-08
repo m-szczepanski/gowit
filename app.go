@@ -224,26 +224,33 @@ func callResult(err error, fallback string) CallResult {
 // HostTokenResult reports where a hosting token comes from without ever
 // carrying the secret across the boundary.
 type HostTokenResult struct {
-	Host    string `json:"host"`
-	Found   bool   `json:"found"`
-	Source  string `json:"source,omitempty"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	CallResult
+	Host   string `json:"host"`
+	Found  bool   `json:"found"`
+	Source string `json:"source,omitempty"`
 }
 
 // SaveHostToken stores the token in the OS keychain; gowit's config file
 // never sees it.
 func (a *App) SaveHostToken(host, token string) CallResult {
-	return callResultTo(a.hostTokens.Save(host, token))
+	if err := a.hostTokens.Save(host, token); err != nil {
+		return callResult(err, callFailedCode)
+	}
+	return CallResult{}
 }
 
 // ClearHostToken removes the keychain entry for the host.
 func (a *App) ClearHostToken(host string) CallResult {
-	return callResultTo(a.hostTokens.Clear(host))
+	if err := a.hostTokens.Clear(host); err != nil {
+		return callResult(err, callFailedCode)
+	}
+	return CallResult{}
 }
 
 // GetHostToken resolves the configured fallback chain and reports the
-// source. No token means Found=false, not an error.
+// source. No token means Found=false, not an error. Verifying a token
+// against the provider API is #67's work; this only proves presence and
+// provenance.
 func (a *App) GetHostToken(host string) HostTokenResult {
 	_, src, err := a.hostTokens.Resolve(a.ctx, host)
 	switch {
@@ -252,16 +259,8 @@ func (a *App) GetHostToken(host string) HostTokenResult {
 	case errors.Is(err, hosting.ErrNoToken):
 		return HostTokenResult{Host: host}
 	default:
-		res := callResult(err, callFailedCode)
-		return HostTokenResult{Host: host, Code: res.Code, Message: res.Message}
+		return HostTokenResult{CallResult: callResult(err, callFailedCode), Host: host}
 	}
-}
-
-func callResultTo(err error) CallResult {
-	if err == nil {
-		return CallResult{}
-	}
-	return callResult(err, callFailedCode)
 }
 
 // GetSettings returns the persisted user settings (defaults when absent).

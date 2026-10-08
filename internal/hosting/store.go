@@ -21,26 +21,36 @@ type SecretStore interface {
 
 const keyringService = "gowit"
 
-// KeyringStore maps hosts onto OS keychain entries (service "gowit",
-// username = host).
-type KeyringStore struct{}
+// KeyringStore maps hosts onto OS keychain entries (service + username =
+// host). The zero value uses the production service; tests set Service to
+// stay out of the user's real namespace.
+type KeyringStore struct {
+	Service string
+}
 
-func (KeyringStore) Get(host string) (string, error) {
-	token, err := keyring.Get(keyringService, host)
+func (s KeyringStore) service() string {
+	if s.Service == "" {
+		return keyringService
+	}
+	return s.Service
+}
+
+func (s KeyringStore) Get(host string) (string, error) {
+	token, err := keyring.Get(s.service(), host)
 	if errors.Is(err, keyring.ErrNotFound) {
 		return "", ErrNoToken
 	}
 	return token, err
 }
 
-func (KeyringStore) Set(host, token string) error {
-	return keyring.Set(keyringService, host, token)
+func (s KeyringStore) Set(host, token string) error {
+	return keyring.Set(s.service(), host, token)
 }
 
 // Remove treats an already-absent entry as success: callers asked for
 // "no token stored", which holds either way.
-func (KeyringStore) Remove(host string) error {
-	err := keyring.Delete(keyringService, host)
+func (s KeyringStore) Remove(host string) error {
+	err := keyring.Delete(s.service(), host)
 	if errors.Is(err, keyring.ErrNotFound) {
 		return nil
 	}

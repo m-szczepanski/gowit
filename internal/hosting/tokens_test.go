@@ -109,8 +109,8 @@ func TestSaveAndClear(t *testing.T) {
 // TestKeyringRoundTrip exercises the real OS keychain. Headless CI has
 // no keyring service; the probe skip is the documented CI behavior.
 func TestKeyringRoundTrip(t *testing.T) {
-	store := KeyringStore{}
-	host := "gowit-test-roundtrip.invalid"
+	store := KeyringStore{Service: "gowit-test"}
+	host := "roundtrip.invalid"
 	if err := store.Set(host, "secret"); err != nil {
 		t.Skipf("no usable OS keyring: %v", err)
 	}
@@ -162,5 +162,14 @@ func TestExecGhMissingBinaryFails(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if _, err := ExecGh(context.Background()); err == nil {
 		t.Fatal("want exec failure without gh on PATH")
+	}
+}
+
+func TestKeyringServiceDefault(t *testing.T) {
+	if got := (KeyringStore{}).service(); got != keyringService {
+		t.Fatalf("default service = %q, want %q", got, keyringService)
+	}
+	if got := (KeyringStore{Service: "gowit-test"}).service(); got != "gowit-test" {
+		t.Fatalf("override service = %q", got)
 	}
 }
