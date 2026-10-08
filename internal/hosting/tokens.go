@@ -28,8 +28,10 @@ type Tokens struct {
 	gh      func(context.Context) (string, error)
 }
 
-func NewTokens(store SecretStore, envName func() string) *Tokens {
-	return &Tokens{store: store, envName: envName, env: os.Getenv, gh: execGh}
+// NewTokens wires the resolver with its two system-boundary probes
+// (OS env and the gh CLI) so callers and tests drive the same path.
+func NewTokens(store SecretStore, envName func() string, gh func(context.Context) (string, error)) *Tokens {
+	return &Tokens{store: store, envName: envName, env: os.Getenv, gh: gh}
 }
 
 func (t *Tokens) Resolve(ctx context.Context, host string) (string, TokenSource, error) {
@@ -80,8 +82,8 @@ func validateHost(host string) error {
 	return nil
 }
 
-// execGh asks the GitHub CLI for its stored token.
-func execGh(ctx context.Context) (string, error) {
+// ExecGh asks the GitHub CLI for its stored token; the default probe.
+func ExecGh(ctx context.Context) (string, error) {
 	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
 	if err != nil {
 		return "", err

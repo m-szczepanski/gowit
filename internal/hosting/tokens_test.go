@@ -141,7 +141,7 @@ func TestNewTokensUsesGhCLI(t *testing.T) {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	tokens := NewTokens(&fakeStore{data: map[string]string{}}, func() string { return "" })
+	tokens := NewTokens(&fakeStore{data: map[string]string{}}, func() string { return "" }, ExecGh)
 	tok, src, err := tokens.Resolve(context.Background(), "github.com")
 	if err != nil || tok != "shim-token" || src != SourceGH {
 		t.Fatalf("got %q %q, err %v", tok, src, err)
@@ -160,7 +160,7 @@ func TestHostValidationRejects(t *testing.T) {
 
 func TestExecGhMissingBinaryFails(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	if _, err := execGh(context.Background()); err == nil {
+	if _, err := ExecGh(context.Background()); err == nil {
 		t.Fatal("want exec failure without gh on PATH")
 	}
 }

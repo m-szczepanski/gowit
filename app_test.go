@@ -13,6 +13,7 @@ import (
 
 	"gowit/internal/config"
 	"gowit/internal/git"
+	"gowit/internal/hosting"
 	"gowit/internal/watcher"
 )
 
@@ -856,5 +857,96 @@ func TestNewAppDefaultCommitSeamUsesRealCommit(t *testing.T) {
 	}
 	if got := gitRunIn(t, dir, "log", "-1", "--format=%s"); got != "real" {
 		t.Fatalf("subject = %q", got)
+	}
+}
+
+type fakeSecrets struct {
+	data map[string]string
+	err  error
+}
+
+func (f *fakeSecrets) Get(host string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	v, ok := f.data[host]
+	if !ok {
+		return "", hosting.ErrNoToken
+	}
+	return v, nil
+}
+
+func (f *fakeSecrets) Set(host, token string) error {
+	f.data[host] = token
+	return nil
+}
+
+func (f *fakeSecrets) Remove(host string) error {
+	delete(f.data, host)
+	return nil
+}
+
+func tokensApp(t *testing.T) (*App, *fakeSecrets) {
+	t.Helper()
+	app, _, _ := newTestApp(t)
+	fake := &fakeSecrets{data: map[string]string{}}
+	app.hostTokens = hosting.NewTokens(fake,
+		func() string { return app.cfg.Settings().HostTokenEnv },
+		func(ctx context.Context) (string, error) { return "", errors.New("gh absent") },
+	)
+	return app, fake
+}
+
+func TestSaveClearHostToken(t *testing.T) {
+	app, fake := tokensApp(t)
+	if res := app.SaveHostToken("github.com", "tok-123"); res.Code != "" {
+		t.Fatalf("save = %+v", res)
+	}
+	if fake.data["github.com"] != "tok-123" {
+		t.Fatalf("fake = %v", fake.data)
+	}
+	status := app.GetHostToken("github.com")
+	if !status.Found || status.Source != "keyring" {
+		t.Fatalf("status = %+v, want found via keyring", status)
+	}
+	if res := app.ClearHostToken("github.com"); res.Code != "" {
+		t.Fatalf("clear = %+v", res)
+	}
+	if status := app.GetHostToken("github.com"); status.Found || status.Code != "" {
+		t.Fatalf("after clear = %+v, want not found without error", status)
+	}
+}
+
+func TestSaveHostTokenRejectsBadInput(t *testing.T) {
+	app, fake := tokensApp(t)
+	if res := app.SaveHostToken("github.com", ""); res.Code != "invalid" {
+		t.Fatalf("empty token = %+v, want invalid", res)
+	}
+	if res := app.SaveHostToken("not a host", "t"); res.Code != "invalid" {
+		t.Fatalf("bad host = %+v, want invalid", res)
+	}
+	if len(fake.data) != 0 {
+		t.Fatalf("rejected saves must not store: %v", fake.data)
+	}
+}
+
+func TestGetHostTokenEnvFallback(t *testing.T) {
+	app, _ := tokensApp(t)
+	t.Setenv("GOWIT_TEST_TOKEN", "env-token")
+	if err := app.cfg.SetSettings(config.Settings{Theme: config.DefaultTheme, HostTokenEnv: "GOWIT_TEST_TOKEN"}); err != nil {
+		t.Fatal(err)
+	}
+	status := app.GetHostToken("gitlab.com")
+	if !status.Found || status.Source != "env" {
+		t.Fatalf("status = %+v, want env source", status)
+	}
+}
+
+func TestGetHostTokenStoreFailure(t *testing.T) {
+	app, fake := tokensApp(t)
+	fake.err = errors.New("keychain locked")
+	status := app.GetHostToken("github.com")
+	if status.Found || status.Code != callFailedCode {
+		t.Fatalf("status = %+v, want call_failed passthrough", status)
 	}
 }
