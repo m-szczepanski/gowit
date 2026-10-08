@@ -35,13 +35,16 @@ func TestSettingsAndRecentsDefaultWhenFileMissing(t *testing.T) {
 func TestSetSettingsPersistsAcrossStores(t *testing.T) {
 	s := storeIn(t)
 
-	if err := s.SetSettings(Settings{Theme: "light"}); err != nil {
+	if err := s.SetSettings(Settings{Theme: "light", HostTokenEnv: "CI_GH_TOKEN"}); err != nil {
 		t.Fatalf("SetSettings: %v", err)
 	}
 
 	reopened := NewStore(s.file, fixedClock())
 	if got := reopened.Settings().Theme; got != "light" {
 		t.Fatalf("Theme after reopen = %q, want light", got)
+	}
+	if got := reopened.Settings().HostTokenEnv; got != "CI_GH_TOKEN" {
+		t.Fatalf("HostTokenEnv after reopen = %q, want CI_GH_TOKEN", got)
 	}
 }
 

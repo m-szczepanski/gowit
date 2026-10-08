@@ -11,6 +11,10 @@ const MaxRecentRepos = 10
 // Settings holds user preferences: theme now, more to accumulate here.
 type Settings struct {
 	Theme string `json:"theme"`
+	// HostTokenEnv names an environment variable holding a hosting
+	// token. The variable's value never lands in this file: only its
+	// name is stored (secret policy lives in internal/hosting).
+	HostTokenEnv string `json:"hostTokenEnv,omitempty"`
 }
 
 // RecentRepo is one repository the user opened, with its last open time.

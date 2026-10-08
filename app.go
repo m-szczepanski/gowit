@@ -12,6 +12,7 @@ import (
 
 	"gowit/internal/config"
 	"gowit/internal/git"
+	"gowit/internal/hosting"
 	"gowit/internal/watcher"
 )
 
@@ -42,13 +43,14 @@ type App struct {
 	committer  commitFunc
 	watcher    workTreeWatcher
 	cfg        *config.Store
+	hostTokens *hosting.Tokens
 	signals    chan struct{}
 	quit       chan struct{}
 	quitOnce   sync.Once
 }
 
 func NewApp() *App {
-	return &App{
+	app := &App{
 		pickFolder: runtimeOpenFolder,
 		emit:       runtime.EventsEmit,
 		open:       git.Open,
@@ -60,6 +62,11 @@ func NewApp() *App {
 		},
 		cfg: config.NewStore(resolveConfigFile(), time.Now),
 	}
+	app.hostTokens = hosting.NewTokens(hosting.KeyringStore{},
+		func() string { return app.cfg.Settings().HostTokenEnv },
+		hosting.ExecGh,
+	)
+	return app
 }
 
 // CallResult crosses the Wails boundary as a value: a Go error would
@@ -207,7 +214,53 @@ func callResult(err error, fallback string) CallResult {
 	if errors.As(err, &gitErr) {
 		return CallResult{Code: string(gitErr.Code), Message: gitErr.Message}
 	}
+	var hostErr *hosting.Error
+	if errors.As(err, &hostErr) {
+		return CallResult{Code: string(hostErr.Kind), Message: hostErr.Message}
+	}
 	return CallResult{Code: fallback, Message: err.Error()}
+}
+
+// HostTokenResult reports where a hosting token comes from without ever
+// carrying the secret across the boundary.
+type HostTokenResult struct {
+	CallResult
+	Host   string `json:"host"`
+	Found  bool   `json:"found"`
+	Source string `json:"source,omitempty"`
+}
+
+// SaveHostToken stores the token in the OS keychain; gowit's config file
+// never sees it.
+func (a *App) SaveHostToken(host, token string) CallResult {
+	if err := a.hostTokens.Save(host, token); err != nil {
+		return callResult(err, callFailedCode)
+	}
+	return CallResult{}
+}
+
+// ClearHostToken removes the keychain entry for the host.
+func (a *App) ClearHostToken(host string) CallResult {
+	if err := a.hostTokens.Clear(host); err != nil {
+		return callResult(err, callFailedCode)
+	}
+	return CallResult{}
+}
+
+// GetHostToken resolves the configured fallback chain and reports the
+// source. No token means Found=false, not an error. Verifying a token
+// against the provider API is #67's work; this only proves presence and
+// provenance.
+func (a *App) GetHostToken(host string) HostTokenResult {
+	_, src, err := a.hostTokens.Resolve(a.ctx, host)
+	switch {
+	case err == nil:
+		return HostTokenResult{Host: host, Found: true, Source: string(src)}
+	case errors.Is(err, hosting.ErrNoToken):
+		return HostTokenResult{Host: host}
+	default:
+		return HostTokenResult{CallResult: callResult(err, callFailedCode), Host: host}
+	}
 }
 
 // GetSettings returns the persisted user settings (defaults when absent).

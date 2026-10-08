@@ -5,9 +5,13 @@ import {config} from '../models';
 
 export function AddRecentRepo(arg1:string):Promise<main.CallResult>;
 
+export function ClearHostToken(arg1:string):Promise<main.CallResult>;
+
 export function Commit(arg1:string,arg2:boolean):Promise<main.CallResult>;
 
 export function DiscardFiles(arg1:Array<string>):Promise<main.StatusResponse>;
+
+export function GetHostToken(arg1:string):Promise<main.HostTokenResult>;
 
 export function GetRecentRepos():Promise<Array<config.RecentRepo>>;
 
@@ -18,6 +22,8 @@ export function GetStatus():Promise<main.StatusResponse>;
 export function OpenFolder():Promise<main.FolderDialogResult>;
 
 export function OpenRepository(arg1:string):Promise<main.OpenRepositoryResult>;
+
+export function SaveHostToken(arg1:string,arg2:string):Promise<main.CallResult>;
 
 export function SetSettings(arg1:config.Settings):Promise<main.CallResult>;
 

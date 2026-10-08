@@ -32,6 +32,7 @@ gowit/
 │
 ├── internal/
 │   ├── git/
+│   ├── hosting/
 │   ├── watcher/
 │   └── config/
 │
