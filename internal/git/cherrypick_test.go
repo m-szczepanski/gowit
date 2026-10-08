@@ -3,6 +3,8 @@ package git
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -135,4 +137,245 @@ func TestCherryPickNegativeMainline(t *testing.T) {
 	if !errors.Is(err, ErrValidationFailed) {
 		t.Fatalf("err = %v, want validation_failed", err)
 	}
+}
+
+// conflictPickRepo: main commits "main edit" (a.txt), side carries
+// "clean pick" (b.txt), "clash pick" (a.txt) and "tail pick" (c.txt).
+// Returns the dir and the side oid list in order.
+func conflictPickRepo(t *testing.T) (string, []string) {
+	t.Helper()
+	dir := initRepo(t)
+	writeFile(t, dir, "a.txt", "base\n")
+	commitAll(t, dir, "base")
+	gitOut(t, dir, "checkout", "-qb", "side")
+	writeFile(t, dir, "b.txt", "clean\n")
+	commitAll(t, dir, "clean pick")
+	clean := gitOut(t, dir, "rev-parse", "HEAD")
+	writeFile(t, dir, "a.txt", "side version\n")
+	commitAll(t, dir, "clash pick")
+	clash := gitOut(t, dir, "rev-parse", "HEAD")
+	writeFile(t, dir, "c.txt", "tail\n")
+	commitAll(t, dir, "tail pick")
+	tail := gitOut(t, dir, "rev-parse", "HEAD")
+	gitOut(t, dir, "checkout", "-q", "main")
+	writeFile(t, dir, "a.txt", "main version\n")
+	commitAll(t, dir, "main edit")
+	return dir, []string{clean, clash, tail}
+}
+
+func mustConflictSequence(t *testing.T, r *Repo, oids []string) error {
+	t.Helper()
+	return r.CherryPick(context.Background(), oids[:2], CherryPickOptions{})
+}
+
+func TestCherryPickStateIdle(t *testing.T) {
+	dir, _ := conflictPickRepo(t)
+	st, err := openRepo(t, dir).CherryPickState(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.InProgress || st.Head != "" || len(st.ConflictPaths) != 0 {
+		t.Fatalf("state = %+v, want idle", st)
+	}
+}
+
+func TestCherryPickConflictTypedWithState(t *testing.T) {
+	ctx := context.Background()
+	dir, oids := conflictPickRepo(t)
+	r := openRepo(t, dir)
+	err := mustConflictSequence(t, r, oids)
+	if !errors.Is(err, ErrCherryPickConflict) {
+		t.Fatalf("err = %v, want cherry_pick_conflict", err)
+	}
+	st, err := r.CherryPickState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.InProgress {
+		t.Fatalf("state = %+v, want in progress", st)
+	}
+	if st.Head != oids[1] {
+		t.Fatalf("Head = %q, want clashing commit %q", st.Head, oids[1])
+	}
+	if len(st.ConflictPaths) != 1 || st.ConflictPaths[0] != "a.txt" {
+		t.Fatalf("ConflictPaths = %v, want [a.txt]", st.ConflictPaths)
+	}
+	// first pick landed before the clash
+	if got := fileContent(t, dir, "b.txt"); got != "clean\n" {
+		t.Fatalf("earlier pick lost: b.txt = %q", got)
+	}
+}
+
+func TestCherryPickAbortRollsBackSequence(t *testing.T) {
+	ctx := context.Background()
+	dir, oids := conflictPickRepo(t)
+	r := openRepo(t, dir)
+	before := gitOut(t, dir, "rev-parse", "HEAD")
+	if err := mustConflictSequence(t, r, oids); !errors.Is(err, ErrCherryPickConflict) {
+		t.Fatal(err)
+	}
+	if err := r.CherryPickAbort(ctx); err != nil {
+		t.Fatalf("abort: %v", err)
+	}
+	st, err := r.CherryPickState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.InProgress {
+		t.Fatalf("state = %+v, want idle after abort", st)
+	}
+	if got := gitOut(t, dir, "rev-parse", "HEAD"); got != before {
+		t.Fatalf("abort must return to %q, got %q", before, got)
+	}
+	if got := fileContent(t, dir, "b.txt"); got != "" {
+		t.Fatalf("abort must undo the landed pick, b.txt = %q", got)
+	}
+}
+
+func TestCherryPickResolveAndContinue(t *testing.T) {
+	ctx := context.Background()
+	dir, oids := conflictPickRepo(t)
+	r := openRepo(t, dir)
+	if err := mustConflictSequence(t, r, oids); !errors.Is(err, ErrCherryPickConflict) {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "a.txt", "merged by hand\n")
+	gitOut(t, dir, "add", "a.txt")
+	if err := r.CherryPickContinue(ctx); err != nil {
+		t.Fatalf("continue: %v", err)
+	}
+	st, err := r.CherryPickState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.InProgress {
+		t.Fatalf("state = %+v, want done after continue", st)
+	}
+	if got := fileContent(t, dir, "a.txt"); got != "merged by hand\n" {
+		t.Fatalf("resolution lost: a.txt = %q", got)
+	}
+	subjects := gitOut(t, dir, "log", "--format=%s", "-3")
+	if subjects != "clash pick\nclean pick\nmain edit" {
+		t.Fatalf("log after continue = %q", subjects)
+	}
+	if got := gitOut(t, dir, "rev-list", "--count", "HEAD"); got != "4" {
+		t.Fatalf("continue must finish both picks, count = %s, want 4", got)
+	}
+	_ = oids
+}
+
+func TestCherryPickContinueWithoutResolutionFails(t *testing.T) {
+	ctx := context.Background()
+	dir, oids := conflictPickRepo(t)
+	r := openRepo(t, dir)
+	if err := mustConflictSequence(t, r, oids); !errors.Is(err, ErrCherryPickConflict) {
+		t.Fatal(err)
+	}
+	err := r.CherryPickContinue(ctx)
+	if !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want git's unmerged-files refusal", err)
+	}
+	st, stateErr := r.CherryPickState(ctx)
+	if stateErr != nil {
+		t.Fatal(stateErr)
+	}
+	if !st.InProgress || len(st.ConflictPaths) != 1 {
+		t.Fatalf("state = %+v, want conflict still pending", st)
+	}
+}
+
+func TestCherryPickSkipGoesToNext(t *testing.T) {
+	ctx := context.Background()
+	dir, oids := conflictPickRepo(t)
+	r := openRepo(t, dir)
+	err := r.CherryPick(ctx, oids, CherryPickOptions{})
+	if !errors.Is(err, ErrCherryPickConflict) {
+		t.Fatalf("err = %v, want cherry_pick_conflict on the clash", err)
+	}
+	// remaining sequence holds only the tail pick; skip drops the clash
+	if err := r.CherryPickSkip(ctx); err != nil {
+		t.Fatalf("skip: %v", err)
+	}
+	st, err := r.CherryPickState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.InProgress {
+		t.Fatalf("state = %+v, want idle after finishing tail pick", st)
+	}
+	if got := fileContent(t, dir, "c.txt"); got != "tail\n" {
+		t.Fatalf("tail pick missing: c.txt = %q", got)
+	}
+	if got := fileContent(t, dir, "a.txt"); got != "main version\n" {
+		t.Fatalf("skipped clash must not touch a.txt, got %q", got)
+	}
+	_ = oids
+}
+
+func TestCherryPickAlreadyAppliedIsTypedEmpty(t *testing.T) {
+	ctx := context.Background()
+	dir, oids := featureRepo(t)
+	r := openRepo(t, dir)
+	if err := r.CherryPick(ctx, []string{oids[0]}, CherryPickOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	err := r.CherryPick(ctx, []string{oids[0]}, CherryPickOptions{})
+	if !errors.Is(err, ErrCherryPickEmpty) {
+		t.Fatalf("err = %v, want cherry_pick_empty for already-applied pick", err)
+	}
+	st, err := r.CherryPickState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.InProgress || len(st.ConflictPaths) != 0 {
+		t.Fatalf("state = %+v, want stopped without conflicts", st)
+	}
+	if err := r.CherryPickAbort(ctx); err != nil {
+		t.Fatalf("abort after empty: %v", err)
+	}
+	if got := gitOut(t, dir, "rev-list", "--count", "main"); got != "2" {
+		t.Fatalf("count = %s, want only the first pick", got)
+	}
+}
+
+func TestCherryPickStateUnreadableHead(t *testing.T) {
+	skipWithoutUnixPerms(t)
+	r := openRepo(t, featureRepoOnly(t))
+	head := filepath.Join(r.path, ".git", "HEAD")
+	if err := os.Chmod(head, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(head, 0o644) })
+	_, err := r.CherryPickState(context.Background())
+	ge, ok := err.(*GitError)
+	if !ok {
+		t.Fatalf("err = %v, want GitError", err)
+	}
+	if ge.ExitCode == 1 {
+		t.Fatalf("unreadable HEAD mapped to idle: %+v", ge)
+	}
+}
+
+func TestCherryPickStateStatusFailurePropagates(t *testing.T) {
+	skipWithoutUnixPerms(t)
+	ctx := context.Background()
+	dir, oids := conflictPickRepo(t)
+	r := openRepo(t, dir)
+	if err := r.CherryPick(ctx, oids[:2], CherryPickOptions{}); !errors.Is(err, ErrCherryPickConflict) {
+		t.Fatal(err)
+	}
+	index := filepath.Join(dir, ".git", "index")
+	if err := os.Chmod(index, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(index, 0o644) })
+	if _, err := r.CherryPickState(ctx); !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want status failure propagated", err)
+	}
+}
+
+func featureRepoOnly(t *testing.T) string {
+	t.Helper()
+	dir, _ := featureRepo(t)
+	return dir
 }
