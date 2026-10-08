@@ -28,9 +28,11 @@ export function useStatusEvents() {
         return EventsOn('repo:status-changed', (payload?: main.StatusResponse) => {
             if (payload && !payload.code && payload.path === repoPath) {
                 queryClient.setQueryData(queryKeys.status(repoPath), payload);
-                return;
+            } else {
+                void queryClient.invalidateQueries({queryKey: queryKeys.status(repoPath)});
             }
-            void queryClient.invalidateQueries({queryKey: queryKeys.status(repoPath)});
+            // work-tree churn also moves submodule pointers and init state
+            void queryClient.invalidateQueries({queryKey: queryKeys.submodules(repoPath)});
         });
     }, [queryClient, repoPath]);
 }

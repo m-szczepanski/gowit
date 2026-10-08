@@ -10,6 +10,10 @@ describe('queryKeys', () => {
         expect(queryKeys.status('/home/user/repo')).toEqual(['status', '/home/user/repo']);
     });
 
+    it('keys submodules by data name and repo path', () => {
+        expect(queryKeys.submodules('/home/user/repo')).toEqual(['submodules', '/home/user/repo']);
+    });
+
     it('keys log by repo path and its query params', () => {
         expect(queryKeys.log('/repo')).toEqual(['log', '/repo', {}]);
         expect(queryKeys.log('/repo', {branch: 'main', limit: 100})).toEqual([
