@@ -12,8 +12,24 @@ import (
 // subFixture: bare seed + work clone pushed; super with README and one
 // registered submodule sub1. Local paths need the file protocol opt-in,
 // which fixtures grant explicitly (production stays flag-neutral).
+// isolateGitConfig pins a fixture-owned global config: CI runners differ
+// (Windows defaults core.autocrlf=true, which rewrites checked-out bytes;
+// some runners carry no identity at all), and repos created inside git
+// calls, like recursively cloned submodules, cannot be configured first.
+func isolateGitConfig(t *testing.T) {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "config")
+	body := "[user]\n\tname = test\n\temail = t@t\n[core]\n\tautocrlf = false\n"
+	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", file)
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(t.TempDir(), "missing"))
+}
+
 func subFixture(t *testing.T) (super, seed string) {
 	t.Helper()
+	isolateGitConfig(t)
 	tmp := t.TempDir()
 	seed = filepath.Join(tmp, "seed.git")
 	gitOut(t, tmp, "init", "--bare", "-b", "main", seed)
@@ -32,6 +48,8 @@ func subFixture(t *testing.T) (super, seed string) {
 	commitAll(t, super, "top")
 	runGitMust(t, super, "-c", "protocol.file.allow=always", "submodule", "add", "-q", "../work", "sub1")
 	gitOut(t, super, "commit", "-qm", "add sub1")
+	// the submodule is a fresh clone: no author identity until set
+	setGitIdentity(t, filepath.Join(super, "sub1"))
 	return super, seed
 }
 

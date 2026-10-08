@@ -961,6 +961,11 @@ func TestGetHostTokenStoreFailure(t *testing.T) {
 
 func subAppFixture(t *testing.T) *App {
 	t.Helper()
+	gitCfg := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(gitCfg, []byte("[user]\n\tname = test\n\temail = t@t\n[core]\n\tautocrlf = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", gitCfg)
 	app, _, _ := newTestApp(t)
 	tmp := t.TempDir()
 	gitRunIn(t, tmp, "init", "-q", "--bare", "-b", "main", "seed.git")
