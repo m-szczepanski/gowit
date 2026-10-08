@@ -48,7 +48,7 @@ export function SubmodulesPanel() {
     const [recursive, setRecursive] = useState(false);
     const [url, setUrl] = useState('');
     const [path, setPath] = useState('');
-    const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+    const [pending, setPending] = useState<{kind: 'remove' | 'deinit'; path: string} | null>(null);
 
     const items = submodules.data?.submodules ?? [];
 
@@ -100,7 +100,7 @@ export function SubmodulesPanel() {
                             {s.state !== 'uninitialized' && (
                                 <Button
                                     disabled={busy}
-                                    onClick={() => deinit.mutate(s.path, {onError: fail})}
+                                    onClick={() => setPending({kind: 'deinit', path: s.path})}
                                     size="sm"
                                     variant="outline"
                                 >
@@ -117,7 +117,7 @@ export function SubmodulesPanel() {
                             </Button>
                             <Button
                                 disabled={busy}
-                                onClick={() => setRemoveTarget(s.path)}
+                                onClick={() => setPending({kind: 'remove', path: s.path})}
                                 size="sm"
                                 variant="outline"
                             >
@@ -164,44 +164,64 @@ export function SubmodulesPanel() {
                 </Button>
             </form>
 
-            {removeTarget !== null && (
-                <RemoveDialog
-                    busy={remove.isPending}
-                    onCancel={() => setRemoveTarget(null)}
-                    onConfirm={() => remove.mutate(removeTarget, {
-                        onError: fail,
-                        onSuccess: () => setRemoveTarget(null)
-                    })}
-                    path={removeTarget}
+            {pending !== null && (
+                <ConfirmDialog
+                    busy={remove.isPending || deinit.isPending}
+                    kind={pending.kind}
+                    onCancel={() => setPending(null)}
+                    onConfirm={() => {
+                        const mutation = pending.kind === 'remove' ? remove : deinit;
+                        mutation.mutate(pending.path, {
+                            onError: fail,
+                            onSuccess: () => setPending(null)
+                        });
+                    }}
+                    path={pending.path}
                 />
             )}
         </div>
     );
 }
 
-function RemoveDialog({path, busy, onCancel, onConfirm}: {
+const COPY = {
+    remove: {
+        title: 'Remove submodule',
+        description: (path: string) =>
+            `Remove "${path}" deinitializes it, deletes its work tree entry and drops the stored ` +
+            'module data. A pointer that moved inside the submodule is discarded. ' +
+            'This cannot be undone from the UI.',
+        action: 'Remove'
+    },
+    deinit: {
+        title: 'Deinitialize submodule',
+        description: (path: string) =>
+            `Deinit clears the work tree of "${path}", including untracked files inside it. ` +
+            'Registration and stored module data survive; Init brings the recorded state back.',
+        action: 'Deinit'
+    }
+};
+
+function ConfirmDialog({kind, path, busy, onCancel, onConfirm}: {
+    kind: 'remove' | 'deinit';
     path: string;
     busy: boolean;
     onCancel: () => void;
     onConfirm: () => void;
 }) {
+    const copy = COPY[kind];
     return (
         <Dialog onOpenChange={onCancel} open>
             <DialogContent>
                 <DialogHeader>
-                    <DialogTitle>Remove submodule</DialogTitle>
-                    <DialogDescription>
-                        {`Remove "${path}" deinitializes it, deletes its work tree entry and drops the
-                        stored module data. A pointer that moved inside the submodule is discarded.
-                        This cannot be undone from the UI.`}
-                    </DialogDescription>
+                    <DialogTitle>{copy.title}</DialogTitle>
+                    <DialogDescription>{copy.description(path)}</DialogDescription>
                 </DialogHeader>
                 <DialogFooter>
                     <Button disabled={busy} onClick={onCancel} variant="outline">
                         Cancel
                     </Button>
                     <Button disabled={busy} onClick={onConfirm}>
-                        Remove
+                        {copy.action}
                     </Button>
                 </DialogFooter>
             </DialogContent>

@@ -93,17 +93,26 @@ describe('SubmodulesPanel', () => {
         expect(await screen.findByText('Could not read submodules')).toBeTruthy();
     });
 
-    it('runs per-row actions against their paths', async () => {
+    it('updates a single row without confirmation', async () => {
         vi.mocked(await binding('GetSubmodules')).mockResolvedValue(listResponse() as never);
         const update = vi.mocked(await binding('SubmoduleUpdate'));
-        const deinit = vi.mocked(await binding('SubmoduleDeinit'));
         await renderPanel();
         await screen.findByText('sub1');
 
         fireEvent.click(screen.getByRole('button', {name: 'Update'}));
         await waitFor(() => expect(update).toHaveBeenCalledWith('sub1'));
+    });
+
+    it('asks confirmation before deinit and then calls the backend', async () => {
+        vi.mocked(await binding('GetSubmodules')).mockResolvedValue(listResponse() as never);
+        const deinit = vi.mocked(await binding('SubmoduleDeinit'));
+        await renderPanel();
+        await screen.findByText('sub1');
 
         fireEvent.click(screen.getByRole('button', {name: 'Deinit'}));
+        expect(await screen.findByText('Deinitialize submodule')).toBeTruthy();
+        const buttons = screen.getAllByRole('button', {name: 'Deinit'});
+        fireEvent.click(buttons[buttons.length - 1]!);
         await waitFor(() => expect(deinit).toHaveBeenCalledWith('sub1'));
     });
 

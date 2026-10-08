@@ -79,7 +79,10 @@ func parseSubmoduleStatus(out string) ([]Submodule, error) {
 func splitSubPathDescribe(rest, line string) (string, string, error) {
 	// describe is bracketed only when it exists: uninitialized and
 	// conflict lines end with the bare path; the caller's length guard
-	// already rules out an empty rest
+	// already rules out an empty rest. A path ending in ")" with a " ("
+	// inside it is indistinguishable from a describe suffix and would
+	// mis-split; git refnames never contain parentheses, so that shape
+	// requires an exotic directory name
 	if rest[len(rest)-1] != ')' {
 		return rest, "", nil
 	}

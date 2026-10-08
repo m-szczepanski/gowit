@@ -420,6 +420,10 @@ func TestSubmoduleRemoveUnreadableModuleDirPropagates(t *testing.T) {
 	skipWithoutUnixPerms(t)
 	ctx := context.Background()
 	super, _ := subFixture(t)
+	// deinit first while permissions allow: Remove's own re-deinit is
+	// then a no-op and git rm exits clean, so the only way the call can
+	// fail is the module-data removal this test is about
+	gitOut(t, super, "submodule", "deinit", "-q", "sub1")
 	module := filepath.Join(super, ".git", "modules", "sub1")
 	if err := os.Chmod(module, 0); err != nil {
 		t.Fatal(err)
@@ -431,5 +435,50 @@ func TestSubmoduleRemoveUnreadableModuleDirPropagates(t *testing.T) {
 	}
 	if _, statErr := os.Stat(module); statErr != nil {
 		t.Fatalf("failed remove should not have forced the deletion away: %v", statErr)
+	}
+}
+
+func TestSubmoduleIgnoresUnrelatedGitmodulesSections(t *testing.T) {
+	ctx := context.Background()
+	super, _ := subFixture(t)
+	gitOut(t, super, "config", "-f", ".gitmodules", "submodule.junk.path", "elsewhere")
+	gitOut(t, super, "config", "-f", ".gitmodules", "submodule.junk.url", "https://example.invalid/x")
+	// git rm insists on a clean .gitmodules, so the unrelated section is
+	// committed exactly like a user's would be
+	gitOut(t, super, "add", ".gitmodules")
+	gitOut(t, super, "commit", "-qm", "unrelated section")
+
+	r := openRepo(t, super)
+	if err := r.SubmoduleRemove(ctx, "sub1"); err != nil {
+		t.Fatalf("remove with an unrelated section present: %v", err)
+	}
+	list, err := r.Submodules(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range list {
+		if s.Path == "sub1" {
+			t.Fatalf("sub1 survived: %+v", list)
+		}
+	}
+	if got := gitOut(t, super, "config", "-f", ".gitmodules", "submodule.junk.path"); got != "elsewhere" {
+		t.Fatalf("unrelated section must survive removal of another: %q", got)
+	}
+}
+
+func TestSubmoduleRemoveRefusedByUnstagedGitmodules(t *testing.T) {
+	ctx := context.Background()
+	super, _ := subFixture(t)
+	r := openRepo(t, super)
+	// deinit first so its own .gitmodules check passes; an unstaged edit
+	// introduced afterwards lets the repeated deinit through but makes
+	// git rm refuse, so Remove surfaces the refusal at the second step
+	if err := r.SubmoduleDeinit(ctx, "sub1"); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, super, "config", "-f", ".gitmodules", "submodule.junk.path", "elsewhere")
+	err := r.SubmoduleRemove(ctx, "sub1")
+	if !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want git rm refusal surfaced", err)
 	}
 }

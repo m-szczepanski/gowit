@@ -85,8 +85,8 @@ describe('StagingView', () => {
         expect(screen.getByTestId('staging-branch').textContent).toBe('main ↑2 ↓1');
     });
 
-    it('badges rows whose submodule pointer moved', () => {
-        renderWith([file({path: 'sub1', xy: 'M.', submodule: 'M'}), file({path: 'plain.txt'})]);
+    it('badges rows git marks with a submodule state column', () => {
+        renderWith([file({path: 'sub1', xy: '.M', submodule: 'SC..'}), file({path: 'plain.txt'})]);
         expect(screen.getAllByText('sub')).toHaveLength(1);
     });
 
