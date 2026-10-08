@@ -958,3 +958,145 @@ func TestGetHostTokenStoreFailure(t *testing.T) {
 		t.Fatalf("status = %+v, want call_failed passthrough", status)
 	}
 }
+
+func subAppFixture(t *testing.T) *App {
+	t.Helper()
+	app, _, _ := newTestApp(t)
+	tmp := t.TempDir()
+	gitRunIn(t, tmp, "init", "-q", "--bare", "-b", "main", "seed.git")
+	gitRunIn(t, tmp, "clone", "-q", "seed.git", "work")
+	work := filepath.Join(tmp, "work")
+	if out, err := exec.Command("git", "-C", work, "config", "user.email", "t@t").CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	if out, err := exec.Command("git", "-C", work, "config", "user.name", "t").CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	if err := os.WriteFile(filepath.Join(work, "lib.txt"), []byte("lib\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRunIn(t, work, "add", ".")
+	gitRunIn(t, work, "commit", "-qm", "lib")
+	gitRunIn(t, work, "push", "-q", "origin", "main")
+
+	super := filepath.Join(tmp, "super")
+	gitRunIn(t, tmp, "init", "-q", "-b", "main", "super")
+	if out, err := exec.Command("git", "-C", super, "config", "user.email", "t@t").CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	if out, err := exec.Command("git", "-C", super, "config", "user.name", "t").CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	if err := os.WriteFile(filepath.Join(super, "README"), []byte("top\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRunIn(t, super, "add", ".")
+	gitRunIn(t, super, "commit", "-qm", "top")
+	gitRunIn(t, super, "-c", "protocol.file.allow=always", "submodule", "add", "-q", "../work", "sub1")
+	gitRunIn(t, super, "commit", "-qm", "add sub1")
+	if res := app.OpenRepository(super); res.Code != "" {
+		t.Fatalf("open super: %+v", res)
+	}
+	return app
+}
+
+func TestAppGetSubmodules(t *testing.T) {
+	app := subAppFixture(t)
+	res := app.GetSubmodules()
+	if res.Code != "" || len(res.Submodules) != 1 {
+		t.Fatalf("res = %+v", res)
+	}
+	s := res.Submodules[0]
+	if s.Path != "sub1" || s.State != "ok" {
+		t.Fatalf("sub = %+v", s)
+	}
+}
+
+func TestAppSubmoduleInitUpdateAndOpen(t *testing.T) {
+	app := subAppFixture(t)
+	if res := app.SubmoduleDeinit("sub1"); res.Code != "" {
+		t.Fatalf("deinit: %+v", res)
+	}
+	if res := app.GetSubmodules(); len(res.Submodules) != 1 || res.Submodules[0].State != "uninitialized" {
+		t.Fatalf("after deinit: %+v", res.Submodules)
+	}
+	if res := app.SubmoduleUpdate("sub1"); res.Code != "" {
+		t.Fatalf("update one: %+v", res)
+	}
+	if res := app.SubmoduleInitUpdate(true); res.Code != "" {
+		t.Fatalf("init update all: %+v", res)
+	}
+	opened := app.OpenSubmodule("sub1")
+	if opened.Code != "" {
+		t.Fatalf("deep link: %+v", opened)
+	}
+	if !strings.HasSuffix(opened.Path, "sub1") {
+		t.Fatalf("path = %q", opened.Path)
+	}
+	inside := app.GetSubmodules()
+	if inside.Code != "" || len(inside.Submodules) != 0 {
+		t.Fatalf("inside submodule, no submodules expected: %+v", inside)
+	}
+}
+
+func TestAppSubmoduleAddAndRemove(t *testing.T) {
+	app := subAppFixture(t)
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "protocol.file.allow")
+	t.Setenv("GIT_CONFIG_VALUE_0", "always")
+
+	tmp := t.TempDir()
+	deep := filepath.Join(tmp, "deep2")
+	gitRunIn(t, tmp, "init", "-q", "-b", "main", "deep2")
+	gitRunIn(t, deep, "config", "user.email", "t@t")
+	gitRunIn(t, deep, "config", "user.name", "t")
+	if err := os.WriteFile(filepath.Join(deep, "d.txt"), []byte("d\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRunIn(t, deep, "add", ".")
+	gitRunIn(t, deep, "commit", "-qm", "d")
+
+	if res := app.SubmoduleAdd(deep, "sub2"); res.Code != "" {
+		t.Fatalf("add: %+v", res)
+	}
+	list := app.GetSubmodules()
+	if len(list.Submodules) != 2 {
+		t.Fatalf("after add: %+v", list.Submodules)
+	}
+	// add only stages; git refuses to rm a gitlink whose .gitmodules
+	// change is still uncommitted, matching the real GUI flow (add,
+	// review, commit, later remove)
+	if res := app.Commit("add sub2", false); res.Code != "" {
+		t.Fatalf("commit the staged add: %+v", res)
+	}
+	if res := app.SubmoduleRemove("sub2"); res.Code != "" {
+		t.Fatalf("remove: %+v", res)
+	}
+	if list := app.GetSubmodules(); len(list.Submodules) != 1 {
+		t.Fatalf("after remove: %+v", list.Submodules)
+	}
+}
+
+func TestAppSubmoduleGuardsAndNoRepo(t *testing.T) {
+	app := subAppFixture(t)
+	if res := app.OpenSubmodule("README"); res.Code != "validation_failed" {
+		t.Fatalf("unregistered deep link: %+v", res)
+	}
+	if res := app.SubmoduleRemove("nope"); res.Code != "validation_failed" {
+		t.Fatalf("remove unregistered: %+v", res)
+	}
+	if res := app.GetSubmodules(); res.Path == "" {
+		t.Fatal("response must echo repo path")
+	}
+
+	noRepo := &App{}
+	if res := noRepo.GetSubmodules(); res.Code != noRepoCode {
+		t.Fatalf("no repo: %+v", res)
+	}
+	if res := noRepo.SubmoduleInitUpdate(false); res.Code != noRepoCode {
+		t.Fatalf("no repo mutate: %+v", res)
+	}
+	if res := noRepo.OpenSubmodule("x"); res.Code != noRepoCode {
+		t.Fatalf("no repo open: %+v", res)
+	}
+}

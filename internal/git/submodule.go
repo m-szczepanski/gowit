@@ -204,8 +204,10 @@ func (r *Repo) SubmoduleRemove(ctx context.Context, path string) error {
 		return err
 	}
 	if name != "" {
-		// git rm usually prunes the .gitmodules section itself; tolerate
-		// the section already being gone, keep other config failures loud
+		// git rm usually prunes the .gitmodules section itself (via
+		// temp+rename, so file modes never block it); remove-section then
+		// exits non-zero saying exactly that. Only this outcome is
+		// tolerated; every other config failure propagates.
 		if _, _, err := runGit(ctx, r.path, "config", "-f", ".gitmodules", "--remove-section", "submodule."+name); err != nil && !strings.Contains(err.Error(), "no such section") {
 			return err
 		}
