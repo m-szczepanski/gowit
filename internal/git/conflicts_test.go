@@ -10,14 +10,16 @@ import (
 	"testing"
 )
 
-// conflictFixture merges two diverged branches so three conflict shapes
-// coexist: a.txt content/content (UU), n.txt add/add (AA, no base),
-// f.txt rename/delete (DU: side mv e.txt->f.txt, main rm e.txt; stages
-// 1 and 3 only, the surviving copy stays under the new name).
+// conflictFixture merges two diverged branches so four conflict shapes
+// coexist: a.txt content/content (UU), d.txt modify/delete (UD: side rm,
+// main edits; no theirs), n.txt add/add (AA, no base), f.txt
+// rename/delete (DU: side mv e.txt->f.txt, main rm e.txt; no ours, the
+// surviving copy stays under the new name).
 func conflictFixture(t *testing.T) string {
 	t.Helper()
 	dir := initRepo(t)
 	writeFile(t, dir, "a.txt", "base\n")
+	writeFile(t, dir, "d.txt", "d base\n")
 	writeFile(t, dir, "e.txt", "e\n")
 	commitAll(t, dir, "base")
 
@@ -26,9 +28,11 @@ func conflictFixture(t *testing.T) string {
 	writeFile(t, dir, "n.txt", "side\n")
 	gitOut(t, dir, "add", "n.txt")
 	gitOut(t, dir, "mv", "e.txt", "f.txt")
+	gitOut(t, dir, "rm", "-q", "d.txt")
 	commitAll(t, dir, "side work")
 
 	gitOut(t, dir, "checkout", "-q", "main")
+	writeFile(t, dir, "d.txt", "d main\n")
 	writeFile(t, dir, "a.txt", "main\n")
 	writeFile(t, dir, "n.txt", "main\n")
 	gitOut(t, dir, "add", "n.txt")
@@ -73,11 +77,14 @@ func TestConflictsAllShapes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Conflicts: %v", err)
 	}
-	if len(list) != 3 {
-		t.Fatalf("len = %d, want 3: %+v", len(list), list)
+	if len(list) != 4 {
+		t.Fatalf("len = %d, want 4: %+v", len(list), list)
 	}
-	if list[0].Path != "a.txt" || list[1].Path != "f.txt" || list[2].Path != "n.txt" {
-		t.Fatalf("paths not sorted: %+v", list)
+	wantPaths := []string{"a.txt", "d.txt", "f.txt", "n.txt"}
+	for i, p := range wantPaths {
+		if list[i].Path != p {
+			t.Fatalf("paths not sorted: %+v, want %v", list, wantPaths)
+		}
 	}
 
 	oids := stageOIDs(t, dir)
@@ -112,6 +119,17 @@ func TestConflictsAllShapes(t *testing.T) {
 	}
 	if f.Theirs == nil || f.Theirs.Oid != oids["f.txt#3"] {
 		t.Fatalf("f.txt theirs = %+v, want %s", f.Theirs, oids["f.txt#3"])
+	}
+
+	d := byPath["d.txt"]
+	if d.XY != "UD" {
+		t.Fatalf("d.txt XY = %q, want UD", d.XY)
+	}
+	if d.Theirs != nil {
+		t.Fatalf("modify/delete with theirs gone must have no theirs stage: %+v", d.Theirs)
+	}
+	if d.Base == nil || d.Base.Oid != oids["d.txt#1"] || d.Ours == nil || d.Ours.Oid != oids["d.txt#2"] {
+		t.Fatalf("d.txt stages = %+v/%+v, want base %s and ours %s", d.Base, d.Ours, oids["d.txt#1"], oids["d.txt#2"])
 	}
 
 	n := byPath["n.txt"]
@@ -284,7 +302,7 @@ func TestConflictsSkipsNonConflictFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 3 {
+	if len(list) != 4 {
 		t.Fatalf("dirty non-conflict file leaked into conflicts: %+v", list)
 	}
 }
@@ -406,14 +424,38 @@ func TestConflictOperationRebase(t *testing.T) {
 
 func TestConflictOperationStatFailurePropagates(t *testing.T) {
 	skipWithoutUnixPerms(t)
-	r := openRepo(t, initRepo(t))
-	gitdir := filepath.Join(r.path, ".git")
-	if err := os.Chmod(gitdir, 0); err != nil {
+	dir := initRepo(t)
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.Mkdir(blocked, 0); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Chmod(gitdir, 0o755) })
-	if _, err := r.ConflictOperation(context.Background()); err == nil {
-		t.Fatal("want stat failure propagated")
+	head := filepath.Join(dir, ".git", "MERGE_HEAD")
+	if err := os.Symlink(filepath.Join(blocked, "nope"), head); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		os.Remove(head)
+		os.Chmod(blocked, 0o755)
+		os.Remove(blocked)
+	})
+	if _, err := openRepo(t, dir).ConflictOperation(context.Background()); err == nil {
+		t.Fatal("want the EACCES stat failure propagated, not swallowed as idle")
+	}
+}
+
+func TestConflictStagesModifyDelete(t *testing.T) {
+	cc, err := openRepo(t, conflictFixture(t)).ConflictStages(context.Background(), "d.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cc.Stages[3]; ok {
+		t.Fatalf("theirs deleted side must have no stage 3: %v", cc.Stages)
+	}
+	if string(cc.Stages[1]) != "d base\n" || string(cc.Stages[2]) != "d main\n" {
+		t.Fatalf("d.txt stages = %v", cc.Stages)
+	}
+	if !cc.WorkingExists || string(cc.Working) != "d main\n" {
+		t.Fatalf("git leaves the modified version in the tree, got %q exists=%v", cc.Working, cc.WorkingExists)
 	}
 }
 

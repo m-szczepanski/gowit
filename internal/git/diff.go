@@ -551,7 +551,7 @@ func (r *Repo) isTracked(ctx context.Context, path string) (bool, error) {
 }
 
 // cleanRepoPath validates a repository-relative, single-file path and
-// normalizes it to slash form for pathspecs, gitshow revisions and result
+// normalizes it to slash form for pathspecs, git show revisions and result
 // paths. Diff and conflict readers share it.
 func cleanRepoPath(path string) (string, error) {
 	validation := func(msg string) error {

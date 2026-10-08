@@ -11,7 +11,9 @@ import (
 // Conflict is one unmerged path. A nil stage means that side has no
 // entry: add/add has no Base, a side that deleted the file has no Ours
 // or Theirs. XY is git's raw porcelain code (UU, AA, DU, UD, ...) which
-// tells the two delete flavors apart.
+// tells the two delete flavors apart. Stage numbers are the index truth:
+// during a rebase ours (2) is the upstream branch being rebased onto,
+// not the user's work.
 type Conflict struct {
 	Path   string      `json:"path"`
 	XY     string      `json:"xy"`
@@ -118,52 +120,48 @@ func (r *Repo) ConflictStages(ctx context.Context, path string) (*ConflictConten
 
 // ConflictOperation names the git operation that owns the current
 // conflict state. It decides which continue/abort/skip action is correct.
+// None means no sequencer state exists at all; a stash-apply conflict is
+// exactly that (git leaves no state files), so callers must combine this
+// with Conflicts, never read None as "clean".
 type ConflictOperation string
 
 const (
-	OperationNone       ConflictOperation = ""
+	OperationNone       ConflictOperation = "none"
 	OperationMerge      ConflictOperation = "merge"
 	OperationRebase     ConflictOperation = "rebase"
 	OperationCherryPick ConflictOperation = "cherry-pick"
 )
 
-// ConflictOperation detects the driver from git's state files. Rebase is
-// checked first because its sequencer also writes CHERRY_PICK_HEAD on
-// some backends; only a plain cherry-pick leaves it alone at top level.
+// ConflictOperation checks git's state markers in order. The markers are
+// disjoint: rebackends write rebase-merge/ or rebase-apply/ plus
+// REBASE_HEAD, plain cherry-pick writes CHERRY_PICK_HEAD, merge writes
+// MERGE_HEAD; the order only fixes precedence if git ever overlaps them.
 func (r *Repo) ConflictOperation(ctx context.Context) (ConflictOperation, error) {
-	rebase, err := r.gitPathExists(ctx, "rebase-merge")
-	if err != nil {
-		return OperationNone, err
+	markers := []struct {
+		name string
+		op   ConflictOperation
+	}{
+		{"rebase-merge", OperationRebase},
+		{"rebase-apply", OperationRebase},
+		{"CHERRY_PICK_HEAD", OperationCherryPick},
+		{"MERGE_HEAD", OperationMerge},
 	}
-	if !rebase {
-		rebase, err = r.gitPathExists(ctx, "rebase-apply")
+	for _, m := range markers {
+		exists, err := r.gitPathExists(ctx, m.name)
 		if err != nil {
 			return OperationNone, err
 		}
-	}
-	if rebase {
-		return OperationRebase, nil
-	}
-	pick, err := r.gitPathExists(ctx, "CHERRY_PICK_HEAD")
-	if err != nil {
-		return OperationNone, err
-	}
-	if pick {
-		return OperationCherryPick, nil
-	}
-	merge, err := r.gitPathExists(ctx, "MERGE_HEAD")
-	if err != nil {
-		return OperationNone, err
-	}
-	if merge {
-		return OperationMerge, nil
+		if exists {
+			return m.op, nil
+		}
 	}
 	return OperationNone, nil
 }
 
 // gitPathExists resolves a state name through rev-parse --git-path so
 // linked worktrees and custom GIT_DIR layouts point at the right file,
-// then stats it. A missing state file is false, not an error.
+// then stats it. A missing state file is false, not an error. --git-path
+// answers in the native syntax of the git build (C:/... on Windows).
 func (r *Repo) gitPathExists(ctx context.Context, name string) (bool, error) {
 	out, _, err := runGit(ctx, r.path, "rev-parse", "--git-path", name)
 	if err != nil {
