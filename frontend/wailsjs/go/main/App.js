@@ -6,12 +6,20 @@ export function AddRecentRepo(arg1) {
   return window['go']['main']['App']['AddRecentRepo'](arg1);
 }
 
+export function ClearHostToken(arg1) {
+  return window['go']['main']['App']['ClearHostToken'](arg1);
+}
+
 export function Commit(arg1, arg2) {
   return window['go']['main']['App']['Commit'](arg1, arg2);
 }
 
 export function DiscardFiles(arg1) {
   return window['go']['main']['App']['DiscardFiles'](arg1);
+}
+
+export function GetHostToken(arg1) {
+  return window['go']['main']['App']['GetHostToken'](arg1);
 }
 
 export function GetRecentRepos() {
@@ -32,6 +40,10 @@ export function OpenFolder() {
 
 export function OpenRepository(arg1) {
   return window['go']['main']['App']['OpenRepository'](arg1);
+}
+
+export function SaveHostToken(arg1, arg2) {
+  return window['go']['main']['App']['SaveHostToken'](arg1, arg2);
 }
 
 export function SetSettings(arg1) {

@@ -35,6 +35,7 @@ export namespace config {
 	}
 	export class Settings {
 	    theme: string;
+	    hostTokenEnv?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -43,6 +44,7 @@ export namespace config {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.theme = source["theme"];
+	        this.hostTokenEnv = source["hostTokenEnv"];
 	    }
 	}
 
@@ -171,6 +173,26 @@ export namespace main {
 	        this.code = source["code"];
 	        this.message = source["message"];
 	        this.path = source["path"];
+	    }
+	}
+	export class HostTokenResult {
+	    code: string;
+	    message: string;
+	    host: string;
+	    found: boolean;
+	    source?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HostTokenResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.message = source["message"];
+	        this.host = source["host"];
+	        this.found = source["found"];
+	        this.source = source["source"];
 	    }
 	}
 	export class OpenRepositoryResult {
