@@ -2,6 +2,8 @@ package git
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -96,4 +98,64 @@ func isHex(s string) bool {
 		}
 	}
 	return len(s) > 0
+}
+
+// SubmoduleUpdateInit runs git submodule update --init (plus
+// --recursive when asked), checking out recorded commits into submodule
+// work trees. Local-path submodules need the caller's git to allow the
+// file transport; this method never widens that policy itself.
+func (r *Repo) SubmoduleUpdateInit(ctx context.Context, recursive bool) error {
+	args := []string{"submodule", "update", "--init"}
+	if recursive {
+		args = append(args, "--recursive")
+	}
+	_, _, err := runGit(ctx, r.path, args...)
+	return err
+}
+
+// SubmoduleUpdatePath initializes and updates one registered submodule.
+func (r *Repo) SubmoduleUpdatePath(ctx context.Context, path string) error {
+	clean, err := r.registeredSubmodule(ctx, path)
+	if err != nil {
+		return err
+	}
+	_, _, err = runGit(ctx, r.path, "submodule", "update", "--init", "--", clean)
+	return err
+}
+
+// OpenSubmodule returns the Repo for a registered submodule's work tree.
+// Unregistered paths are rejected before touching the file system;
+// registered but uninitialized ones surface git.Open's typed
+// not-a-repository error, which is the honest state.
+func (r *Repo) OpenSubmodule(ctx context.Context, path string) (*Repo, error) {
+	clean, err := r.registeredSubmodule(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(r.path, filepath.FromSlash(clean))
+	if _, statErr := os.Stat(filepath.Join(dir, ".git")); statErr != nil {
+		return nil, &GitError{
+			Code:     CodeNotARepository,
+			Message:  "submodule work tree not initialized: " + clean,
+			ExitCode: -1,
+		}
+	}
+	return Open(dir)
+}
+
+func (r *Repo) registeredSubmodule(ctx context.Context, path string) (string, error) {
+	clean, err := cleanRepoPath(path)
+	if err != nil {
+		return "", err
+	}
+	subs, err := r.Submodules(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, s := range subs {
+		if s.Path == clean {
+			return clean, nil
+		}
+	}
+	return "", &GitError{Code: CodeValidationFailed, Message: "not a registered submodule: " + clean, ExitCode: -1}
 }

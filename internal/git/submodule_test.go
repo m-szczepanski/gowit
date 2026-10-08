@@ -174,3 +174,130 @@ func subFixtureOnly(t *testing.T) string {
 	super, _ := subFixture(t)
 	return super
 }
+
+func TestSubmoduleUpdateInit(t *testing.T) {
+	ctx := context.Background()
+	super, _ := subFixture(t)
+	gitOut(t, super, "submodule", "deinit", "-q", "sub1")
+	if got := subState(t, super, "sub1"); got != SubmoduleUninitialized {
+		t.Fatalf("precondition: %q", got)
+	}
+	if err := openRepo(t, super).SubmoduleUpdateInit(ctx, false); err != nil {
+		t.Fatalf("SubmoduleUpdateInit: %v", err)
+	}
+	if got := subState(t, super, "sub1"); got != SubmoduleOK {
+		t.Fatalf("after init: %q, want ok", got)
+	}
+	if got := fileContent(t, filepath.Join(super, "sub1"), "lib.txt"); got != "lib\n" {
+		t.Fatalf("work tree not restored, lib.txt = %q", got)
+	}
+}
+
+func TestSubmoduleUpdateInitRecursive(t *testing.T) {
+	ctx := context.Background()
+	super, _ := subFixtureWithNested(t)
+	gitOut(t, super, "submodule", "deinit", "-q", "--all")
+	if err := openRepo(t, super).SubmoduleUpdateInit(ctx, true); err != nil {
+		t.Fatalf("recursive init: %v", err)
+	}
+	if state := nestedState(t, super); state != SubmoduleOK {
+		t.Fatalf("nested after recursive init = %q, want ok", state)
+	}
+	if got := fileContent(t, filepath.Join(super, "sub1", "inner"), "deep.txt"); got != "deep\n" {
+		t.Fatalf("nested file missing: %q", got)
+	}
+}
+
+func nestedState(t *testing.T, super string) SubmoduleState {
+	t.Helper()
+	out, _, err := runGit(context.Background(), super, "submodule", "status", "--recursive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := parseSubmoduleStatus(string(out))
+	if err != nil {
+		t.Fatalf("recursive status unparsable: %v\n%s", err, out)
+	}
+	for _, s := range list {
+		if s.Path == "sub1/inner" {
+			return s.State
+		}
+	}
+	t.Fatalf("nested entry missing in:\n%s", out)
+	return ""
+}
+
+// subFixtureWithNested extends subFixture: work carries its own submodule
+// inner (from seed2), so super has two levels. Repo-local
+// protocol.file.allow lets recursive clones of sibling paths proceed,
+// mirroring what a user opts into for local development trees.
+func subFixtureWithNested(t *testing.T) (super, seed string) {
+	t.Helper()
+	super, seed = subFixture(t)
+	tmp := filepath.Dir(super)
+	seed2 := filepath.Join(tmp, "seed2.git")
+	gitOut(t, tmp, "init", "--bare", "-b", "main", seed2)
+	deep := filepath.Join(tmp, "deep")
+	gitOut(t, tmp, "clone", seed2, deep)
+	setGitIdentity(t, deep)
+	writeFile(t, deep, "deep.txt", "deep\n")
+	commitAll(t, deep, "deep")
+	gitOut(t, deep, "push", "-q", "origin", "main")
+
+	sub := filepath.Join(super, "sub1")
+	// absolute path: a relative <repository> in submodule add resolves
+	// against the superproject's remote, not the working directory
+	runGitMust(t, sub, "-c", "protocol.file.allow=always", "submodule", "add", "-q", deep, "inner")
+	gitOut(t, sub, "commit", "-qm", "add inner")
+	gitOut(t, super, "add", "sub1")
+	gitOut(t, super, "commit", "-qm", "sub records inner")
+	gitOut(t, super, "config", "protocol.file.allow", "always")
+	return super, seed
+}
+
+func TestSubmoduleUpdatePath(t *testing.T) {
+	ctx := context.Background()
+	super, _ := subFixture(t)
+	gitOut(t, super, "submodule", "deinit", "-q", "sub1")
+	r := openRepo(t, super)
+	if err := r.SubmoduleUpdatePath(ctx, "sub1"); err != nil {
+		t.Fatalf("update by path: %v", err)
+	}
+	if got := subState(t, super, "sub1"); got != SubmoduleOK {
+		t.Fatalf("state = %q", got)
+	}
+	if err := r.SubmoduleUpdatePath(ctx, "../outside"); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("escape: %v", err)
+	}
+	if err := r.SubmoduleUpdatePath(ctx, "nope"); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("unknown path: %v, want validation", err)
+	}
+}
+
+func TestOpenSubmodule(t *testing.T) {
+	ctx := context.Background()
+	super, _ := subFixture(t)
+	r := openRepo(t, super)
+
+	sub, err := r.OpenSubmodule(ctx, "sub1")
+	if err != nil {
+		t.Fatalf("OpenSubmodule: %v", err)
+	}
+	if !strings.HasSuffix(sub.Path(), "sub1") {
+		t.Fatalf("path = %q", sub.Path())
+	}
+	st, err := sub.Status(ctx)
+	if err != nil || len(st.Files) != 0 {
+		t.Fatalf("status inside submodule: %+v %v", st, err)
+	}
+
+	if _, err := r.OpenSubmodule(ctx, "README"); !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("unregistered path: %v", err)
+	}
+	gitOut(t, super, "submodule", "deinit", "-q", "sub1")
+	if _, err := r.OpenSubmodule(ctx, "sub1"); !errors.Is(err, ErrNotARepository) {
+		t.Fatalf("uninitialized submodule: %v, want not_a_repository", err)
+	} else if !strings.Contains(err.Error(), "not initialized") {
+		t.Fatalf("message should explain the uninitialized state: %v", err)
+	}
+}
