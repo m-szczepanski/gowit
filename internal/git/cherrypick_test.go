@@ -98,3 +98,41 @@ func TestCherryPickGuards(t *testing.T) {
 		t.Fatalf("guarded calls must not touch history, main has %s commits", count)
 	}
 }
+
+func TestCherryPickMergeNeedsMainline(t *testing.T) {
+	ctx := context.Background()
+	dir, mergeHash, _, rootHash := mergeRepo(t)
+	gitOut(t, dir, "checkout", "-qb", "consumer", rootHash)
+	err := openRepo(t, dir).CherryPick(ctx, []string{mergeHash}, CherryPickOptions{})
+	if !errors.Is(err, ErrCommandFailed) {
+		t.Fatalf("err = %v, want command_failed refusal without -m", err)
+	}
+	if !strings.Contains(err.Error(), "merge") {
+		t.Fatalf("message = %q, want git's merge-specific refusal", err)
+	}
+}
+
+func TestCherryPickMergeWithMainline(t *testing.T) {
+	ctx := context.Background()
+	dir, mergeHash, _, rootHash := mergeRepo(t)
+	gitOut(t, dir, "checkout", "-qb", "consumer", rootHash)
+	r := openRepo(t, dir)
+	if err := r.CherryPick(ctx, []string{mergeHash}, CherryPickOptions{Mainline: 1}); err != nil {
+		t.Fatalf("CherryPick -m 1: %v", err)
+	}
+	if got := fileContent(t, dir, "s.txt"); got != "side content\nline2\n" {
+		t.Fatalf("first-parent side content = %q", got)
+	}
+	if got := fileContent(t, dir, "base.txt"); got != "b\n" {
+		t.Fatalf("mainline 1 must not bring first-parent-side edits, base.txt = %q", got)
+	}
+}
+
+func TestCherryPickNegativeMainline(t *testing.T) {
+	ctx := context.Background()
+	dir, _ := featureRepo(t)
+	err := openRepo(t, dir).CherryPick(ctx, []string{"main"}, CherryPickOptions{Mainline: -1})
+	if !errors.Is(err, ErrValidationFailed) {
+		t.Fatalf("err = %v, want validation_failed", err)
+	}
+}
