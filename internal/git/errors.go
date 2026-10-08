@@ -125,7 +125,12 @@ func parseFailed(msg string) error {
 	return &GitError{Code: CodeParseFailed, Message: msg, ExitCode: -1}
 }
 
+// firstLine returns the first non-empty line; runGit prepends stderr to
+// stdout, so a leading blank means stderr printed nothing.
 func firstLine(s string) string {
+	for strings.HasPrefix(s, "\n") || strings.HasPrefix(s, "\r") {
+		s = s[1:]
+	}
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		return strings.TrimRight(s[:i], "\r")
 	}

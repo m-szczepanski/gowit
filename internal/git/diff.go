@@ -448,7 +448,7 @@ func diffFlags(opts []DiffOption) ([]string, error) {
 // bytes, matching the shape git prints once the file is staged - binary
 // heuristic included.
 func (r *Repo) DiffWorkingFile(ctx context.Context, path string, staged bool, opts ...DiffOption) (*FileDiff, error) {
-	clean, err := cleanDiffPath(path)
+	clean, err := cleanRepoPath(path)
 	if err != nil {
 		return nil, err
 	}
@@ -518,7 +518,7 @@ func (r *Repo) DiffCommitFile(ctx context.Context, hash, path string, opts ...Di
 	if err := checkCommitHash(hash); err != nil {
 		return nil, err
 	}
-	clean, err := cleanDiffPath(path)
+	clean, err := cleanRepoPath(path)
 	if err != nil {
 		return nil, err
 	}
@@ -550,23 +550,24 @@ func (r *Repo) isTracked(ctx context.Context, path string) (bool, error) {
 	return false, err
 }
 
-// cleanDiffPath validates a repository-relative, single-file diff path and
-// normalizes it to slash form for pathspecs and result paths.
-func cleanDiffPath(path string) (string, error) {
+// cleanRepoPath validates a repository-relative, single-file path and
+// normalizes it to slash form for pathspecs, git show revisions and result
+// paths. Diff and conflict readers share it.
+func cleanRepoPath(path string) (string, error) {
 	validation := func(msg string) error {
 		return &GitError{Code: CodeValidationFailed, Message: msg, ExitCode: -1}
 	}
 	if path == "" {
-		return "", validation("diff path required")
+		return "", validation("path required")
 	}
 	clean := filepath.ToSlash(filepath.Clean(path))
 	// IsAbs is drive-letter based on Windows; a leading slash means the
 	// same thing to git there and would surface as its exit-128 fatal
 	if filepath.IsAbs(path) || strings.HasPrefix(clean, "/") {
-		return "", validation("diff path must be relative to the repository: " + path)
+		return "", validation("path must be relative to the repository: " + path)
 	}
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", validation("diff path must stay inside the repository: " + path)
+		return "", validation("path must stay inside the repository: " + path)
 	}
 	return clean, nil
 }
