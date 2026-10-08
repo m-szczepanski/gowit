@@ -253,6 +253,7 @@ function FileRow({file, section, busy, onToggle, onDiscard}: {
                 onCheckedChange={onToggle}
             />
             <Badge variant="secondary">{file.xy}</Badge>
+            {file.submodule && <Badge variant="secondary">sub</Badge>}
             <span className="w-24 shrink-0 text-xs text-muted-foreground">{label(file.change)}</span>
             <span className="truncate text-sm">{displayPath(file)}</span>
             {!file.conflict && (
