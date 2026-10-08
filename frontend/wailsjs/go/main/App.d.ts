@@ -19,9 +19,13 @@ export function GetSettings():Promise<config.Settings>;
 
 export function GetStatus():Promise<main.StatusResponse>;
 
+export function GetSubmodules():Promise<main.SubmodulesResponse>;
+
 export function OpenFolder():Promise<main.FolderDialogResult>;
 
 export function OpenRepository(arg1:string):Promise<main.OpenRepositoryResult>;
+
+export function OpenSubmodule(arg1:string):Promise<main.OpenRepositoryResult>;
 
 export function SaveHostToken(arg1:string,arg2:string):Promise<main.CallResult>;
 
@@ -30,6 +34,16 @@ export function SetSettings(arg1:config.Settings):Promise<main.CallResult>;
 export function StageAll():Promise<main.StatusResponse>;
 
 export function StageFiles(arg1:Array<string>):Promise<main.StatusResponse>;
+
+export function SubmoduleAdd(arg1:string,arg2:string):Promise<main.StatusResponse>;
+
+export function SubmoduleDeinit(arg1:string):Promise<main.StatusResponse>;
+
+export function SubmoduleInitUpdate(arg1:boolean):Promise<main.StatusResponse>;
+
+export function SubmoduleRemove(arg1:string):Promise<main.StatusResponse>;
+
+export function SubmoduleUpdate(arg1:string):Promise<main.StatusResponse>;
 
 export function UnstageAll():Promise<main.StatusResponse>;
 

@@ -403,3 +403,71 @@ func runtimeOpenFolder(ctx context.Context) (string, error) {
 		Title: "Open repository folder",
 	})
 }
+
+// SubmodulesResponse lists the registered submodules of the open repo.
+// The slice is never nil so the JSON shape stays stable.
+type SubmodulesResponse struct {
+	CallResult
+	Path       string          `json:"path"`
+	Submodules []git.Submodule `json:"submodules"`
+}
+
+func (a *App) GetSubmodules() SubmodulesResponse {
+	repo := a.currentRepo()
+	if repo == nil {
+		return SubmodulesResponse{CallResult: CallResult{Code: noRepoCode, Message: "no repository open"}}
+	}
+	subs, err := repo.Submodules(a.ctx)
+	if err != nil {
+		return SubmodulesResponse{CallResult: callResult(err, callFailedCode), Path: repo.Path()}
+	}
+	if subs == nil {
+		subs = []git.Submodule{}
+	}
+	return SubmodulesResponse{Path: repo.Path(), Submodules: subs}
+}
+
+// SubmoduleInitUpdate runs git submodule update --init, --recursive when
+// asked. Sub-tree writes ride the watcher, and mutate echoes the fresh
+// status like the staging ops do.
+func (a *App) SubmoduleInitUpdate(recursive bool) StatusResponse {
+	return a.mutate(func(repo *git.Repo) error { return repo.SubmoduleUpdateInit(a.ctx, recursive) })
+}
+
+// SubmoduleUpdate initializes and updates one registered submodule.
+func (a *App) SubmoduleUpdate(path string) StatusResponse {
+	return a.mutate(func(repo *git.Repo) error { return repo.SubmoduleUpdatePath(a.ctx, path) })
+}
+
+// SubmoduleDeinit clears a submodule's work tree, keeping its
+// registration and stored module data.
+func (a *App) SubmoduleDeinit(path string) StatusResponse {
+	return a.mutate(func(repo *git.Repo) error { return repo.SubmoduleDeinit(a.ctx, path) })
+}
+
+// SubmoduleRemove unregisters a submodule completely, including stored
+// module data. Destructive (a dirty pointer is discarded), so the UI must
+// confirm before calling.
+func (a *App) SubmoduleRemove(path string) StatusResponse {
+	return a.mutate(func(repo *git.Repo) error { return repo.SubmoduleRemove(a.ctx, path) })
+}
+
+// SubmoduleAdd registers and clones a submodule, staging .gitmodules and
+// the gitlink; committing that stage remains the user's call.
+func (a *App) SubmoduleAdd(url, path string) StatusResponse {
+	return a.mutate(func(repo *git.Repo) error { return repo.SubmoduleAdd(a.ctx, url, path) })
+}
+
+// OpenSubmodule switches the open repo to a registered, initialized
+// submodule's work tree: the deep link behind the submodules panel.
+func (a *App) OpenSubmodule(path string) OpenRepositoryResult {
+	repo := a.currentRepo()
+	if repo == nil {
+		return OpenRepositoryResult{CallResult: CallResult{Code: noRepoCode, Message: "no repository open"}}
+	}
+	sub, err := repo.OpenSubmodule(a.ctx, path)
+	if err != nil {
+		return OpenRepositoryResult{CallResult: callResult(err, openFailedCode)}
+	}
+	return a.OpenRepository(sub.Path())
+}

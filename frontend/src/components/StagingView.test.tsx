@@ -85,6 +85,11 @@ describe('StagingView', () => {
         expect(screen.getByTestId('staging-branch').textContent).toBe('main ↑2 ↓1');
     });
 
+    it('badges rows git marks with a submodule state column', () => {
+        renderWith([file({path: 'sub1', xy: '.M', submodule: 'SC..'}), file({path: 'plain.txt'})]);
+        expect(screen.getAllByText('sub')).toHaveLength(1);
+    });
+
     it('shows an unborn marker when the branch has no name and no counts', () => {
         renderWith([], {ahead: 0, behind: 0, detached: false, head: '', oid: ''});
         expect(screen.getByTestId('staging-branch').textContent).toBe('(unborn)');

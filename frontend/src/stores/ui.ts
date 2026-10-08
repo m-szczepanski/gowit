@@ -1,6 +1,6 @@
 import {create} from 'zustand';
 
-export type PanelId = 'status' | 'history' | 'graph';
+export type PanelId = 'status' | 'submodules' | 'history' | 'graph';
 
 type UiState = {
     activePanel: PanelId;

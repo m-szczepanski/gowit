@@ -65,7 +65,8 @@ describe('useStatusEvents', () => {
 
         fire('repo:status-changed', snapshot('/repo/one'));
         expect(setQueryData).toHaveBeenCalledWith(queryKeys.status('/repo/one'), snapshot('/repo/one'));
-        expect(invalidate).not.toHaveBeenCalled();
+        expect(invalidate).not.toHaveBeenCalledWith({queryKey: queryKeys.status('/repo/one')});
+        expect(invalidate).toHaveBeenCalledWith({queryKey: queryKeys.submodules('/repo/one')});
     });
 
     it('invalidates instead of adopting when the payload is stale or broken', async () => {
@@ -81,7 +82,9 @@ describe('useStatusEvents', () => {
         fire('repo:status-changed', {code: 'no_repo', message: 'gone', path: '', branch: {}, files: []});
         fire('repo:status-changed');
         expect(setQueryData).not.toHaveBeenCalled();
-        expect(invalidate).toHaveBeenCalledTimes(3);
+        expect(invalidate).toHaveBeenCalledTimes(6);
+        expect(invalidate).toHaveBeenCalledWith({queryKey: queryKeys.status('/repo/one')});
+        expect(invalidate).toHaveBeenCalledWith({queryKey: queryKeys.submodules('/repo/one')});
     });
 
     it('subscribes only while open, retargets on switch, detaches on unmount', async () => {

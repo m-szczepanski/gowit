@@ -1,4 +1,5 @@
 import {StagingView} from '@/components/StagingView';
+import {SubmodulesPanel} from '@/components/SubmodulesPanel';
 import {Tabs, TabsContent, TabsList, TabsTrigger} from '@/components/ui/tabs';
 import {ResizableHandle, ResizablePanel, ResizablePanelGroup} from '@/components/ui/resizable';
 import type {PanelId} from '@/stores/ui';
@@ -16,11 +17,15 @@ export function MainTabs() {
         >
             <TabsList className="mx-3 mt-2">
                 <TabsTrigger value="status">Status</TabsTrigger>
+                <TabsTrigger value="submodules">Submodules</TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>
                 <TabsTrigger value="graph">Graph</TabsTrigger>
             </TabsList>
             <TabsContent value="status" className="min-h-0">
                 <StagingView/>
+            </TabsContent>
+            <TabsContent value="submodules" className="min-h-0 overflow-y-auto">
+                <SubmodulesPanel/>
             </TabsContent>
             <TabsContent value="history" className="flex min-h-0 flex-col">
                 <ResizablePanelGroup direction="vertical" className="min-h-0 flex-1">

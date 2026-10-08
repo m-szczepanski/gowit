@@ -14,6 +14,7 @@ export const queryKeys = {
     // that dirty all cached pages at once (a new commit rewrites history
     // everywhere)
     logPrefix: (repoPath: string) => ['log', repoPath] as const,
+    submodules: (repoPath: string) => ['submodules', repoPath] as const,
     diff: (repoPath: string, commitHash: string, filePath: string | null = null) =>
         ['diff', repoPath, commitHash, filePath] as const
 };
